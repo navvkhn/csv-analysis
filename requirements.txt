@@ -1,6 +1,18 @@
-streamlit>=1.38.0
-pandas>=2.2.2
-plotly>=5.24.0
+# Core framework
+streamlit>=1.39.0
+
+# Data manipulation
+pandas>=2.1.0
 numpy>=1.26.0
-openpyxl>=3.1.2
+
+# Visualization
+plotly>=5.24.0
+
+# Data export and image generation (used for chart downloads)
 kaleido>=0.2.1
+
+# Optional — for performance when handling large CSVs
+pyarrow>=15.0.0
+
+# Optional — for Excel/CSV export compatibility
+openpyxl>=3.1.2

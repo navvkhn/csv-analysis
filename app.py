@@ -1,25 +1,32 @@
+import streamlit.components.v1 as components
+# -*- coding: utf-8 -*-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 
-st.set_page_config(page_title="Data Explorer", layout="wide")
+# --- RESET FUNCTION ---
+def reset_app():
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
-# --- COMPACT FULL-WIDTH HEADER ---
+# --- HEADER STYLE ---
 st.markdown("""
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-        }
         .header-container {
             background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
             color: white;
-            padding: 15px 20px;
-            border-radius: 0;
-            margin: 0 -50px 20px -50px;
-            padding-top: 20px;
-            padding-bottom: 20px;
+            padding: 18px 28px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header-left {
+            display: flex;
+            flex-direction: column;
         }
         .header-title {
             font-size: 24px;
@@ -27,110 +34,139 @@ st.markdown("""
             margin: 0;
         }
         .header-subtitle {
-            font-size: 12px;
+            font-size: 13px;
             opacity: 0.9;
-            margin: 4px 0 0 0;
+            margin-top: 3px;
         }
-        .footer-container {
-            background: #f0f2f6;
-            color: #666;
-            padding: 15px 20px;
-            text-align: center;
-            font-size: 12px;
-            margin: 20px -50px -20px -50px;
-            border-top: 1px solid #ddd;
+        div[data-testid="stButton"] > button {
+            background: white !important;
+            color: #4a4a4a !important;
+            border: none !important;
+            padding: 8px 16px !important;
+            border-radius: 6px !important;
+            font-weight: bold !important;
+            font-size: 13px !important;
+            box-shadow: 0 0 6px rgba(0,0,0,0.25) !important;
+            cursor: pointer !important;
+        }
+        div[data-testid="stButton"] > button:hover {
+            background: #f3f3f3 !important;
         }
     </style>
-    <div class="header-container">
+""", unsafe_allow_html=True)
+
+# --- HEADER RENDER ---
+header_html = """
+<div class="header-container">
+    <div class="header-left">
         <div class="header-title">📊 CSV Data Explorer</div>
         <div class="header-subtitle">by Naved Khan</div>
     </div>
-""", unsafe_allow_html=True)
+    <div class="header-right">
+        <div id="button-container"></div>
+    </div>
+</div>
+"""
+
+st.markdown(header_html, unsafe_allow_html=True)
+
+# Inject the Streamlit button directly inside the same gradient div
+button_container = st.container()
+with button_container:
+    button_placeholder = st.empty()
+    button_html = """
+        <style>
+            #button-container {
+                position: relative;
+                top: -54px; /* aligns button inside bar */
+                right: 0;
+                text-align: right;
+                margin-right: 20px;
+            }
+        </style>
+    """
+    st.markdown(button_html, unsafe_allow_html=True)
+    if st.button("🔄 Back to Start", key="reset_btn"):
+        reset_app()
 
 # --- FILE UPLOAD & PREPROCESSING ---
-file_expander = st.expander("📁 File Controls", expanded=True)
+st.divider()
 
-with file_expander:
-    uploaded = st.file_uploader(
-        "Drag and drop file here (CSV, max 200MB) — or click to browse",
-        type=["csv"],
-        key="file_upload"
-    )
+# Check if file is already uploaded
+uploaded = st.session_state.get("file_upload", None)
 
-    col_a, col_b = st.columns([1, 1])
-    with col_a:
-        if st.button("📂 New File", key="new_file_btn", width='stretch'):
-            st.session_state.clear()
+# Show the expander only if file is NOT uploaded yet
+if uploaded is None:
+    with st.expander("📁 File Controls", expanded=True):
+        uploaded_file = st.file_uploader(
+            "Drag and drop file here (CSV, max 200MB) — or click to browse",
+            type=["csv"],
+            key="file_uploader_main"
+        )
+
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            if st.button("📂 New File", key="new_file_btn"):
+                st.session_state.clear()
+                st.rerun()
+
+        with col_b:
+            if st.button("🔄 Reset Filters", key="reset_filters_btn"):
+                for key in list(st.session_state.keys()):
+                    if key.startswith(("filter_", "dt_", "chart_")):
+                        del st.session_state[key]
+                st.rerun()
+
+        # When a file is uploaded, store it and rerun to hide expander
+        if uploaded_file is not None:
+            st.session_state["file_upload"] = uploaded_file
             st.rerun()
-    with col_b:
-        if st.button("🔄 Reset Filters", key="reset_filters_btn", width='stretch'):
-            for key in list(st.session_state.keys()):
-                if key.startswith("filter_") or key.startswith("dt_") or key.startswith("chart_"):
-                    del st.session_state[key]
-            st.rerun()
 
-# If uploaded, collapse file expander to save space
-if "file_upload" in st.session_state and st.session_state["file_upload"] is not None:
-    file_expander.empty()
-    uploaded = st.session_state["file_upload"]
-else:
-    uploaded = None
+# Load the uploaded file from session
+uploaded = st.session_state.get("file_upload", None)
+
 
 if uploaded:
     # Initialize raw dataframe
     if "raw_df" not in st.session_state:
         st.session_state.raw_df = pd.read_csv(uploaded)
     
-    raw_df = st.session_state.raw_df
-    
-    # --- STEP 1: COLUMN SELECTION ---
-    st.subheader("🔧 Data Configuration")
-    
-    columns_applied = st.session_state.get("columns_applied", False)
-    
-    with st.expander("Step 1: Select Columns to Keep", expanded=not columns_applied):
-        st.info("Select which columns you want to work with")
-        
-        col_left, col_right = st.columns([2, 1])
-        
-        with col_left:
-            selected_cols = st.multiselect(
-                "Select columns to keep",
-                raw_df.columns.tolist(),
-                default=raw_df.columns.tolist(),
-                key="selected_columns"
-            )
-        
-        with col_right:
-            st.write("")
-            st.write("")
-            if st.button("✅ Apply Column Selection", key="apply_cols_btn", width='stretch'):
-                st.session_state.selected_cols = selected_cols
-                st.session_state.columns_applied = True
-                st.success(f"Selected {len(selected_cols)} columns")
-                st.rerun()
-    
-    # Check if columns are selected
-    if "columns_applied" not in st.session_state:
-        st.warning("⚠️ Please select columns and click 'Apply Column Selection' to proceed")
-        st.stop()
-    
-    selected_cols = st.session_state.selected_cols
-    df = raw_df[selected_cols].copy()
-    
-    # --- STEP 2: SCHEMA CONFIGURATION ---
-    schema_applied = st.session_state.get("schema_applied", False)
-    
-    with st.expander("Step 2: Configure Data Types", expanded=not schema_applied):
-        st.info("Set data types for each column (optional)")
-        
+    raw_df = st.session_state.raw_df.copy()
+
+    # --- SESSION FLAGS ---
+    if "schema_applied" not in st.session_state:
+        st.session_state.schema_applied = False
+
+    # --- STEP 1: DATA PREVIEW + COLUMN SELECTION ---
+    with st.expander("Data Preview & Column Selection", expanded=not st.session_state.schema_applied):
+        st.info("Select which columns to work with — preview updates automatically")
+
+        selected_cols = st.multiselect(
+            "Select columns to keep",
+            raw_df.columns.tolist(),
+            default=st.session_state.get("selected_cols", raw_df.columns.tolist()),
+            key="selected_columns_live"
+        )
+
+        # Update session state immediately
+        st.session_state.selected_cols = selected_cols
+
+        # Filter dataframe dynamically
+        df = raw_df[selected_cols].copy()
+
+        # --- Live Data Preview ---
+        st.markdown("Live Data Preview")
+        st.dataframe(df.head(30), use_container_width=True, height=150)
+
+    # --- STEP 2: SCHEMA CONFIGURATION (Strict Conversion) ---
+    with st.expander("Configure Data Types", expanded=not st.session_state.schema_applied):
+        st.info("Select a data type for each column. Invalid conversions will become NaN.")
+
         dtype_config = {}
         cols_grid = st.columns(3)
-        
+
         for idx, col in enumerate(selected_cols):
-            current_type = str(df[col].dtype)
             col_idx = idx % 3
-            
             with cols_grid[col_idx]:
                 new_type = st.selectbox(
                     f"{col}",
@@ -139,46 +175,139 @@ if uploaded:
                     key=f"dtype_{col}"
                 )
                 dtype_config[col] = new_type
-        
-        st.write("")
-        if st.button("✅ Apply Data Types", key="apply_schema_btn", width='stretch'):
-            # Apply data type conversions
-            for col, dtype in dtype_config.items():
-                if dtype != "auto":
-                    try:
-                        if dtype == "datetime64":
-                            df[col] = pd.to_datetime(df[col], errors='coerce')
-                        elif dtype == "int64":
-                            df[col] = pd.to_numeric(df[col], errors='coerce').astype('Int64')
-                        elif dtype == "float64":
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
-                        elif dtype == "string":
-                            df[col] = df[col].astype(str)
-                    except Exception as e:
-                        st.warning(f"Could not convert '{col}' to {dtype}: {str(e)}")
-            
-            st.session_state.df_processed = df.copy()
-            st.session_state.schema_applied = True
-            st.success("Data types applied successfully!")
-            st.rerun()
-    
-    # Check if schema is applied
-    if "schema_applied" not in st.session_state:
-        st.warning("⚠️ Please configure data types and click 'Apply Data Types' to proceed")
-        st.stop()
-    
-    df = st.session_state.df_processed.copy()
-    
+
+        # --- APPLY STRICT SCHEMA BUTTON ---
+        if st.button("✅ Apply Data Types", key="apply_schema_btn"):
+            try:
+                df_converted = df.copy()
+
+                # Strict type conversion logic
+                for col, dtype in dtype_config.items():
+                    if dtype != "auto":
+                        try:
+                            if dtype == "datetime64":
+                                df_converted[col] = pd.to_datetime(df_converted[col], errors="coerce", utc=False)
+                            elif dtype == "int64":
+                                df_converted[col] = pd.to_numeric(df_converted[col], errors="coerce").astype("Int64")
+                            elif dtype == "float64":
+                                df_converted[col] = pd.to_numeric(df_converted[col], errors="coerce")
+                            elif dtype == "string":
+                                df_converted[col] = df_converted[col].astype(str)
+                        except Exception as e:
+                            st.warning(f"⚠️ Could not strictly convert '{col}' to {dtype}: {e}")
+
+                # ✅ Save processed DataFrame and collapse schema expanders
+                st.session_state.df_processed = df_converted.copy()
+                st.session_state.schema_applied = True
+
+                # ✅ Auto-expand + auto-scroll to lower Data Preview panel
+                st.session_state.data_preview_expanded = True
+                st.session_state.scroll_to_preview = True
+
+                st.success("✅ Data types applied successfully (strict mode)")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Error applying schema: {e}")
+
+    # --- DETERMINE WHICH DATAFRAME TO USE NEXT ---
+    df = st.session_state.get("df_processed", df).copy()
+
+    # --- BASIC COLUMN GROUPS ---
     cols = df.columns.tolist()
     cat_cols = df.select_dtypes(exclude=["number"]).columns.tolist()
     num_cols = df.select_dtypes(include=["number"]).columns.tolist()
 
     # --- COMPACT FILENAME ---
-    st.markdown(f"<p style='text-align:center;font-size:13px;margin:8px 0;color:#666;'>📄 <code>{uploaded.name}</code></p>", unsafe_allow_html=True)
-    
-    # Data preview section in body (collapsible)
-    with st.expander("👁️ Data Preview", expanded=False):
-        st.dataframe(df.head(100000), width='stretch')
+    st.markdown(
+        f"<p style='text-align:center;font-size:13px;margin:8px 0;color:#666;'>📄 <code>{uploaded.name}</code></p>",
+        unsafe_allow_html=True,
+    )
+
+    # --- AUTO-SCROLL DATA PREVIEW SECTION ---
+    import streamlit.components.v1 as components
+    st.markdown("<div id='preview-anchor'></div>", unsafe_allow_html=True)
+
+    with st.expander("📋 Data Preview", expanded=st.session_state.get("data_preview_expanded", False)):
+        st.dataframe(df.head(1000), use_container_width=True, height=150)
+
+    if st.session_state.get("scroll_to_preview", False):
+        components.html(
+            """
+            <script>
+            try {
+                const parentDoc = window.parent.document;
+                const anchor = parentDoc.querySelector("#preview-anchor");
+                if (anchor) {
+                    anchor.scrollIntoView({ behavior: "smooth", block: "start" });
+                } else {
+                    const main = parentDoc.querySelector("section.main");
+                    if (main) { main.scrollTo({ top: main.scrollHeight, behavior: "smooth" }); }
+                }
+            } catch (e) {}
+            </script>
+            """,
+            height=0,
+        )
+        st.session_state.scroll_to_preview = False
+    #     # --- SMART AUTO CHART SUGGESTION ---
+    # st.divider()
+    # st.subheader("🤖 Smart Chart Suggestion")
+
+    # # Detect data structure
+    # num_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    # cat_cols = df.select_dtypes(exclude=["number", "datetime64[ns]"]).columns.tolist()
+    # date_cols = df.select_dtypes(include=["datetime64[ns]"]).columns.tolist()
+
+    # suggested_chart = None
+    # x_col, y_col = None, None
+
+    # if len(cat_cols) >= 1 and len(num_cols) >= 1:
+    #     suggested_chart = "Bar Chart"
+    #     x_col, y_col = cat_cols[0], num_cols[0]
+    # elif len(date_cols) >= 1 and len(num_cols) >= 1:
+    #     suggested_chart = "Line Chart"
+    #     x_col, y_col = date_cols[0], num_cols[0]
+    # elif len(num_cols) >= 2:
+    #     suggested_chart = "Scatter Chart"
+    #     x_col, y_col = num_cols[0], num_cols[1]
+    # elif len(cat_cols) >= 2:
+    #     suggested_chart = "Pie Chart"
+    #     x_col, y_col = cat_cols[0], cat_cols[1] if len(cat_cols) > 1 else None
+    # elif len(num_cols) == 1:
+    #     suggested_chart = "Histogram"
+    #     x_col, y_col = num_cols[0], None
+
+    # if suggested_chart:
+    #     st.success(f"✅ Suggested Chart: **{suggested_chart}** using `{x_col}` and `{y_col or 'values'}`")
+
+    #     if st.button("📈 Create Suggested Chart"):
+    #         import plotly.express as px
+
+    #         try:
+    #             if suggested_chart == "Bar Chart":
+    #                 fig = px.bar(df, x=x_col, y=y_col, color=x_col)
+    #             elif suggested_chart == "Line Chart":
+    #                 fig = px.line(df, x=x_col, y=y_col, markers=True)
+    #             elif suggested_chart == "Scatter Chart":
+    #                 fig = px.scatter(df, x=x_col, y=y_col, color=x_col)
+    #             elif suggested_chart == "Pie Chart":
+    #                 fig = px.pie(df, names=x_col)
+    #             elif suggested_chart == "Histogram":
+    #                 fig = px.histogram(df, x=x_col, nbins=30)
+
+    #             fig.update_layout(
+    #                 title=f"📊 {suggested_chart}: {x_col} vs {y_col or ''}",
+    #                 height=500,
+    #                 showlegend=True,
+    #                 plot_bgcolor="rgba(240,240,240,0.5)",
+    #                 paper_bgcolor="rgba(240,240,240,0.5)",
+    #             )
+    #             st.plotly_chart(fig, use_container_width=True)
+    #         except Exception as e:
+    #             st.error(f"Error creating suggested chart: {e}")
+    # else:
+    #     st.info("⚙️ Upload a dataset with at least one numeric or categorical column to get suggestions.")
 
     st.divider()
 
