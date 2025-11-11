@@ -178,7 +178,7 @@ if uploaded:
     
     # Data preview section in body (collapsible)
     with st.expander("👁️ Data Preview", expanded=False):
-        st.dataframe(df.head(), width='stretch')
+        st.dataframe(df.head(100000), width='stretch')
 
     st.divider()
 
