@@ -3,7 +3,4 @@ pandas>=2.2.2
 plotly>=5.24.0
 numpy>=1.26.0
 openpyxl>=3.1.2
-<<<<<<< HEAD
 kaleido>=0.2.1
-=======
->>>>>>> 2824fc5 (trying Preview as 10000 rows)
