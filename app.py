@@ -2,73 +2,21 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.io as pio
 import json
-import numpy as np
 
-st.set_page_config(
-    page_title="CSV Data Explorer BI",
-    layout="wide"
-)
+from streamlit_elements import elements, dashboard, mui
+
+st.set_page_config(layout="wide")
 
 # =====================================================
-# UTILITIES
+# STATE INIT
 # =====================================================
 
-@st.cache_data(show_spinner=False)
-def load_csv(file):
-    return pd.read_csv(file)
+if "layout" not in st.session_state:
+    st.session_state.layout = []
 
-def safe_export(fig, title, chart_type):
-    try:
-        png = pio.to_image(fig, format="png", width=3840, height=2160, scale=2)
-        st.download_button(
-            "📥 Download Chart (PNG)",
-            png,
-            f"{title}.png",
-            mime="image/png"
-        )
-    except Exception:
-        html = pio.to_html(fig, full_html=True)
-        st.download_button(
-            "📥 Download Chart (HTML)",
-            html,
-            f"{title}.html",
-            mime="text/html"
-        )
-
-# =====================================================
-# AI INSIGHTS ENGINE
-# =====================================================
-
-def generate_insights(df, x_col, y_col):
-    if df.empty:
-        return "No insights available."
-
-    insights = []
-    total = df[y_col].sum()
-
-    top = df.sort_values(y_col, ascending=False).iloc[0]
-    bottom = df.sort_values(y_col).iloc[0]
-
-    pct = (top[y_col] / total * 100) if total else 0
-    insights.append(
-        f"**{top[x_col]}** contributes **{pct:.1f}%** of total value."
-    )
-
-    if top[y_col] > bottom[y_col] * 5:
-        insights.append("Distribution is highly skewed.")
-
-    mean = df[y_col].mean()
-    std = df[y_col].std()
-    outliers = df[df[y_col] > mean + 2 * std]
-
-    if not outliers.empty:
-        insights.append(
-            f"Outliers detected: {', '.join(outliers[x_col].astype(str))}."
-        )
-
-    return " ".join(insights)
+if "visuals" not in st.session_state:
+    st.session_state.visuals = {}
 
 # =====================================================
 # HEADER
@@ -78,14 +26,15 @@ st.markdown("""
 <style>
 .header {
     background: linear-gradient(90deg,#667eea,#764ba2);
-    padding:18px 28px;
+    padding:16px 24px;
     border-radius:10px;
     color:white;
+    margin-bottom:16px;
 }
 </style>
 <div class="header">
-<h2>📊 CSV Data Explorer BI</h2>
-<p>Save • Share • Reuse Dashboards</p>
+<h2>📊 BI Dashboard – Layout Mode</h2>
+<p>Drag • Resize • Configure Visuals (Power BI Style)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -94,156 +43,155 @@ st.markdown("""
 # =====================================================
 
 uploaded = st.file_uploader("Upload CSV", type=["csv"])
-
 if not uploaded:
-    st.info("Upload a CSV file to begin.")
     st.stop()
 
-df = load_csv(uploaded)
-
-num_cols = df.select_dtypes(include=["number"]).columns.tolist()
-cat_cols = df.select_dtypes(exclude=["number"]).columns.tolist()
-
-# =====================================================
-# SIDEBAR – DASHBOARD CONTROLS
-# =====================================================
-
-st.sidebar.header("📊 Chart Configuration")
-
-chart_type = st.sidebar.selectbox(
-    "Chart Type",
-    ["Bar", "Horizontal Bar", "Line", "Scatter", "Pie", "Donut", "Histogram"],
-    key="chart_type"
-)
-
-x_col = st.sidebar.selectbox("X-axis", cat_cols + num_cols, key="x_col")
-
-y_col = None
-if chart_type != "Histogram":
-    y_col = st.sidebar.selectbox("Y-axis", num_cols, key="y_col")
-
-aggregation = st.sidebar.selectbox(
-    "Aggregation",
-    ["Count", "Sum", "Average"],
-    key="aggregation"
-)
+df = pd.read_csv(uploaded)
+num_cols = df.select_dtypes(include="number").columns.tolist()
+cat_cols = df.select_dtypes(exclude="number").columns.tolist()
 
 # =====================================================
-# AGGREGATION
+# GLOBAL FILTERS
 # =====================================================
 
-if aggregation == "Count":
-    agg_df = df.groupby(x_col).size().reset_index(name="count")
-    y_col = "count"
-elif aggregation == "Sum":
-    agg_df = df.groupby(x_col)[y_col].sum().reset_index()
-else:
-    agg_df = df.groupby(x_col)[y_col].mean().reset_index()
+st.sidebar.header("🔍 Global Filters")
+
+global_filters = {}
+for col in cat_cols:
+    vals = sorted(df[col].dropna().astype(str).unique())
+    sel = st.sidebar.multiselect(col, vals, key=f"g_{col}")
+    if sel:
+        global_filters[col] = sel
+
+filtered_df = df.copy()
+for col, vals in global_filters.items():
+    filtered_df = filtered_df[filtered_df[col].astype(str).isin(vals)]
 
 # =====================================================
-# CUSTOM SORT
+# ADD VISUAL
 # =====================================================
 
-custom_order = st.sidebar.multiselect(
-    "Custom Category Order",
-    agg_df[x_col].astype(str).tolist(),
-    key="custom_order"
-)
+st.sidebar.divider()
+st.sidebar.header("➕ Add Visual")
 
-if custom_order:
-    agg_df[x_col] = pd.Categorical(
-        agg_df[x_col].astype(str),
-        categories=custom_order,
-        ordered=True
+v_type = st.sidebar.selectbox("Chart Type", ["Bar", "Line", "Scatter", "Pie"])
+x_col = st.sidebar.selectbox("X-axis", cat_cols + num_cols)
+y_col = st.sidebar.selectbox("Y-axis", num_cols)
+
+if st.sidebar.button("➕ Add to Canvas"):
+    vid = f"visual_{len(st.session_state.visuals)+1}"
+
+    st.session_state.visuals[vid] = {
+        "type": v_type,
+        "x": x_col,
+        "y": y_col,
+        "title": f"{v_type} Chart",
+        "agg": "Count",
+        "hide_x": False,
+        "hide_y": False,
+        "x_title": x_col,
+        "y_title": y_col,
+        "x_axis_type": "category",
+        "y_axis_type": "linear",
+        "filters": {}
+    }
+
+    st.session_state.layout.append(
+        dashboard.Item(vid, x=0, y=0, w=6, h=4)
     )
-    agg_df = agg_df.sort_values(x_col)
 
 # =====================================================
-# CUSTOM COLORS
+# DASHBOARD CANVAS
 # =====================================================
 
-use_custom_colors = st.sidebar.checkbox("Enable Custom Colors")
+with elements("dashboard"):
 
-color_map = None
-if use_custom_colors:
-    color_map = {}
-    for v in agg_df[x_col].astype(str).unique():
-        color_map[v] = st.sidebar.color_picker(f"{v}", "#1f77b4")
+    with dashboard.Grid(
+        st.session_state.layout,
+        cols=12,
+        rowHeight=90,
+        draggableHandle=".drag-handle",
+        onLayoutChange=lambda l: st.session_state.update({"layout": l}),
+    ):
 
-# =====================================================
-# CHART
-# =====================================================
+        for vid, cfg in st.session_state.visuals.items():
 
-if chart_type == "Bar":
-    fig = px.bar(agg_df, x=x_col, y=y_col, color=x_col, color_discrete_map=color_map)
-elif chart_type == "Horizontal Bar":
-    fig = px.bar(agg_df, y=x_col, x=y_col, orientation="h", color=x_col, color_discrete_map=color_map)
-elif chart_type == "Line":
-    fig = px.line(agg_df, x=x_col, y=y_col, markers=True)
-elif chart_type == "Scatter":
-    fig = px.scatter(agg_df, x=x_col, y=y_col, color=x_col)
-elif chart_type == "Pie":
-    fig = px.pie(agg_df, names=x_col, values=y_col, color_discrete_map=color_map)
-elif chart_type == "Donut":
-    fig = px.pie(agg_df, names=x_col, values=y_col, hole=0.4, color_discrete_map=color_map)
-else:
-    fig = px.histogram(df, x=x_col)
+            # ---------------- DATA (VISUAL LEVEL FILTERS) ----------------
+            vdf = filtered_df.copy()
+            for c, vals in cfg["filters"].items():
+                vdf = vdf[vdf[c].astype(str).isin(vals)]
 
-fig.update_layout(height=550)
+            # ---------------- AGG ----------------
+            if cfg["agg"] == "Count":
+                agg_df = vdf.groupby(cfg["x"]).size().reset_index(name="count")
+                y_val = "count"
+            else:
+                agg_df = vdf.groupby(cfg["x"])[cfg["y"]].mean().reset_index()
+                y_val = cfg["y"]
 
-st.plotly_chart(fig, use_container_width=True)
+            # ---------------- CHART ----------------
+            if cfg["type"] == "Bar":
+                fig = px.bar(agg_df, x=cfg["x"], y=y_val)
+            elif cfg["type"] == "Line":
+                fig = px.line(agg_df, x=cfg["x"], y=y_val, markers=True)
+            elif cfg["type"] == "Scatter":
+                fig = px.scatter(agg_df, x=cfg["x"], y=y_val)
+            else:
+                fig = px.pie(agg_df, names=cfg["x"], values=y_val)
 
-# =====================================================
-# AI INSIGHTS
-# =====================================================
+            fig.update_layout(
+                title=cfg["title"],
+                xaxis_title="" if cfg["hide_x"] else cfg["x_title"],
+                yaxis_title="" if cfg["hide_y"] else cfg["y_title"],
+                xaxis_type=cfg["x_axis_type"],
+                yaxis_type=cfg["y_axis_type"],
+                height=100 * st.session_state.layout[
+                    next(i for i, l in enumerate(st.session_state.layout) if l["i"] == vid)
+                ]["h"]
+            )
 
-st.markdown("### 🧠 AI Chart Insights")
-st.success(generate_insights(agg_df, x_col, y_col))
-
-# =====================================================
-# SAVE / LOAD DASHBOARD
-# =====================================================
-
-st.markdown("### 💾 Save / Share Dashboard")
-
-dashboard_config = {
-    "chart_type": chart_type,
-    "x_col": x_col,
-    "y_col": y_col,
-    "aggregation": aggregation,
-    "custom_order": custom_order,
-    "colors": color_map
-}
-
-config_json = json.dumps(dashboard_config, indent=2)
-
-st.download_button(
-    "💾 Save Dashboard (.json)",
-    config_json,
-    file_name="dashboard_config.json",
-    mime="application/json"
-)
-
-uploaded_config = st.file_uploader(
-    "📤 Load Dashboard (.json)",
-    type=["json"]
-)
-
-if uploaded_config:
-    cfg = json.load(uploaded_config)
-
-    for k, v in cfg.items():
-        st.session_state[k] = v
-
-    st.success("Dashboard loaded successfully.")
-    st.experimental_rerun()
+            # ---------------- CARD ----------------
+            with mui.Card(key=vid, sx={"height": "100%"}):
+                mui.CardHeader(
+                    title=cfg["title"],
+                    className="drag-handle",
+                    sx={"cursor": "move"},
+                    action=mui.IconButton("⚙️", onClick=lambda v=vid: st.session_state.update({"edit": v}))
+                )
+                mui.CardContent(st.plotly_chart(fig, use_container_width=True))
 
 # =====================================================
-# EXPORT
+# VISUAL SETTINGS PANEL (POWER BI FORMAT PANE)
 # =====================================================
 
-st.markdown("### 📥 Export Chart")
-safe_export(fig, "dashboard_chart", chart_type)
+if "edit" in st.session_state:
+    vid = st.session_state.edit
+    cfg = st.session_state.visuals[vid]
+
+    st.sidebar.divider()
+    st.sidebar.header(f"⚙️ Visual Settings")
+
+    cfg["title"] = st.sidebar.text_input("Chart Title", cfg["title"])
+    cfg["agg"] = st.sidebar.selectbox("Aggregation", ["Count", "Average"], index=0 if cfg["agg"]=="Count" else 1)
+
+    cfg["hide_x"] = st.sidebar.checkbox("Hide X-axis", cfg["hide_x"])
+    cfg["hide_y"] = st.sidebar.checkbox("Hide Y-axis", cfg["hide_y"])
+
+    cfg["x_title"] = st.sidebar.text_input("X-axis Title", cfg["x_title"])
+    cfg["y_title"] = st.sidebar.text_input("Y-axis Title", cfg["y_title"])
+
+    cfg["x_axis_type"] = st.sidebar.selectbox("X-axis Type", ["category", "linear"], index=0)
+    cfg["y_axis_type"] = st.sidebar.selectbox("Y-axis Type", ["linear", "log"], index=0)
+
+    st.sidebar.markdown("**Visual Filters**")
+    for col in cat_cols:
+        opts = sorted(df[col].dropna().astype(str).unique())
+        cfg["filters"][col] = st.sidebar.multiselect(
+            col, opts, cfg["filters"].get(col, [])
+        )
+
+    if st.sidebar.button("❌ Close Settings"):
+        del st.session_state.edit
 
 # =====================================================
 # FOOTER
@@ -252,6 +200,6 @@ safe_export(fig, "dashboard_chart", chart_type)
 st.markdown("""
 <hr>
 <p style="text-align:center;color:#777">
-CSV Data Explorer BI • v3.0 • Built by <strong>Naved Khan</strong>
+BI Dashboard • Layout Mode • Built by <strong>Naved Khan</strong>
 </p>
 """, unsafe_allow_html=True)
