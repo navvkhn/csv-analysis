@@ -33,8 +33,8 @@ if "chart_counter" not in st.session_state:
 st.markdown("""
 <div style="background:linear-gradient(90deg,#667eea,#764ba2);
             padding:16px;border-radius:10px;color:white;margin-bottom:16px;">
-<h3 style="margin:0">📊 CSV Data Explorer BI</h3>
-<small>Power BI–style visual authoring</small>
+<h3 style="margin:0">📊 Data Analytical Tool </h3>
+<small>Power BI–style visual and Data filtering</small>
 </div>
 """, unsafe_allow_html=True)
 
