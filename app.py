@@ -3,14 +3,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.io as pio
-import streamlit.components.v1 as components
+from copy import deepcopy
 
-# Layout mode deps (safe)
 from streamlit_elements import elements, dashboard, mui, html
 
-# =====================================================
-# APP CONFIG
-# =====================================================
 st.set_page_config(page_title="CSV Data Explorer", layout="wide")
 
 # =====================================================
@@ -22,26 +18,25 @@ def reset_app():
     st.rerun()
 
 # =====================================================
+# INIT STATE
+# =====================================================
+if "charts" not in st.session_state:
+    st.session_state.charts = {}
+
+if "layout" not in st.session_state:
+    st.session_state.layout = []
+
+if "chart_counter" not in st.session_state:
+    st.session_state.chart_counter = 0
+
+# =====================================================
 # HEADER
 # =====================================================
 st.markdown("""
-<style>
-.header-container {
-    background: linear-gradient(90deg,#667eea,#764ba2);
-    color:white;
-    padding:18px 28px;
-    border-radius:10px;
-    margin-bottom:20px;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-</style>
-<div class="header-container">
-  <div>
-    <h3 style="margin:0">📊 CSV Data Explorer</h3>
-    <small>by Naved Khan</small>
-  </div>
+<div style="background:linear-gradient(90deg,#667eea,#764ba2);
+            padding:16px;border-radius:10px;color:white;margin-bottom:16px;">
+<h3 style="margin:0">📊 CSV Data Explorer</h3>
+<small>Power BI–style Visual Formatting</small>
 </div>
 """, unsafe_allow_html=True)
 
@@ -51,19 +46,13 @@ if st.button("🔄 Back to Start"):
 # =====================================================
 # FILE UPLOAD (CSV + EXCEL)
 # =====================================================
-st.divider()
-
 uploaded = st.session_state.get("file_upload")
 
 if uploaded is None:
-    with st.expander("📁 File Controls", expanded=True):
-        uploaded_file = st.file_uploader(
-            "Upload CSV / Excel",
-            type=["csv", "xlsx", "xls"]
-        )
-        if uploaded_file:
-            st.session_state.file_upload = uploaded_file
-            st.rerun()
+    file = st.file_uploader("Upload CSV or Excel", type=["csv","xlsx","xls"])
+    if file:
+        st.session_state.file_upload = file
+        st.rerun()
 
 uploaded = st.session_state.get("file_upload")
 if not uploaded:
@@ -73,7 +62,7 @@ if not uploaded:
 # LOAD DATA
 # =====================================================
 if "raw_df" not in st.session_state:
-    if uploaded.name.endswith((".xlsx", ".xls")):
+    if uploaded.name.endswith((".xlsx",".xls")):
         st.session_state.raw_df = pd.read_excel(uploaded)
     else:
         st.session_state.raw_df = pd.read_csv(uploaded)
@@ -92,187 +81,222 @@ with st.expander("📋 Data Preview & Column Selection", expanded=True):
     df = raw_df[selected_cols].copy()
     st.dataframe(df.head(50), use_container_width=True)
 
-# =====================================================
-# COLUMN GROUPS
-# =====================================================
 cols = df.columns.tolist()
 num_cols = df.select_dtypes(include="number").columns.tolist()
 cat_cols = df.select_dtypes(exclude="number").columns.tolist()
 
 # =====================================================
-# FILTERS (GLOBAL)
+# GLOBAL FILTERS
 # =====================================================
-st.sidebar.header("🔍 Filters")
-
-filters = {}
-for c in cat_cols:
-    vals = sorted(df[c].dropna().astype(str).unique())
-    sel = st.sidebar.multiselect(c, vals, key=f"f_{c}")
-    if sel:
-        filters[c] = sel
+st.sidebar.header("🔍 Global Filters")
 
 filtered_df = df.copy()
-for c, v in filters.items():
-    filtered_df = filtered_df[filtered_df[c].astype(str).isin(v)]
+for c in cat_cols:
+    vals = sorted(df[c].dropna().astype(str).unique())
+    sel = st.sidebar.multiselect(c, vals, key=f"gf_{c}")
+    if sel:
+        filtered_df = filtered_df[filtered_df[c].astype(str).isin(sel)]
 
 # =====================================================
-# METRICS
-# =====================================================
-m1, m2, m3 = st.columns(3)
-m1.metric("Total Rows", len(df))
-m2.metric("Filtered Rows", len(filtered_df))
-m3.metric("Active Filters", len(filters))
-
-# =====================================================
-# LAYOUT MODE TOGGLE
+# LAYOUT MODE
 # =====================================================
 st.sidebar.divider()
-layout_mode = st.sidebar.toggle("🧱 Layout Mode (Drag & Resize)", value=False)
+layout_mode = st.sidebar.toggle("🧱 Layout Mode (Drag & Resize)", False)
 
 # =====================================================
-# CHART CONFIG
+# ADD VISUAL
 # =====================================================
 st.sidebar.divider()
-num_charts = st.sidebar.slider("Number of Charts", 1, 4, 1)
+st.sidebar.header("➕ Add Visual")
 
-charts_data = []
+ct = st.sidebar.selectbox("Chart Type", ["Bar","Line","Scatter","Pie","Histogram"])
+x = st.sidebar.selectbox("X-axis", cols)
+y = st.sidebar.selectbox("Y-axis", num_cols) if ct!="Histogram" else None
 
-for i in range(num_charts):
-    with st.sidebar.expander(f"📊 Chart {i+1}", expanded=False):
-        chart_type = st.selectbox(
-            "Chart Type",
-            ["Bar", "Line", "Scatter", "Pie", "Histogram"],
-            key=f"ct_{i}"
+if st.sidebar.button("➕ Add Chart"):
+    cid = f"chart_{st.session_state.chart_counter}"
+    st.session_state.chart_counter += 1
+
+    st.session_state.charts[cid] = {
+        "type": ct,
+        "x": x,
+        "y": y,
+        "agg": "Count",
+        "title": f"{ct} Chart",
+        "x_title": x,
+        "y_title": y,
+        "hide_x": False,
+        "hide_y": False,
+        "x_axis_type": "category",
+        "y_axis_type": "linear",
+        "show_labels": False,
+        "label_position": "outside",
+        "decimals": 2,
+        "custom_sort": [],
+        "custom_colors": {},
+        "filters": {}
+    }
+
+    st.session_state.layout.append(
+        dashboard.Item(cid, x=0, y=len(st.session_state.layout)*4, w=6, h=4)
+    )
+    st.rerun()
+
+# =====================================================
+# VISUAL SETTINGS (FORMAT PANE)
+# =====================================================
+st.sidebar.divider()
+st.sidebar.header("⚙️ Visual Settings")
+
+for cid, cfg in list(st.session_state.charts.items()):
+    with st.sidebar.expander(cfg["title"], expanded=False):
+
+        cfg["title"] = st.text_input("Chart Title", cfg["title"], key=f"t_{cid}")
+        cfg["x_title"] = st.text_input("X-axis Title", cfg["x_title"], key=f"xt_{cid}")
+        cfg["y_title"] = st.text_input("Y-axis Title", cfg["y_title"], key=f"yt_{cid}")
+
+        cfg["agg"] = st.selectbox(
+            "Aggregation", ["Count","Sum","Average"],
+            index=["Count","Sum","Average"].index(cfg["agg"]),
+            key=f"a_{cid}"
         )
-        x_col = st.selectbox("X-axis", cols, key=f"x_{i}")
-        y_col = None
-        if chart_type != "Histogram":
-            y_col = st.selectbox("Y-axis", num_cols, key=f"y_{i}")
 
-        agg = st.selectbox("Aggregation", ["Count", "Sum", "Average"], key=f"a_{i}")
+        cfg["hide_x"] = st.checkbox("Hide X-axis", cfg["hide_x"], key=f"hx_{cid}")
+        cfg["hide_y"] = st.checkbox("Hide Y-axis", cfg["hide_y"], key=f"hy_{cid}")
 
-        title = st.text_input(
-            "Chart Title",
-            f"{agg} of {y_col} by {x_col}" if y_col else f"{chart_type} of {x_col}",
-            key=f"t_{i}"
+        cfg["x_axis_type"] = st.selectbox(
+            "X-axis Type", ["category","linear"],
+            index=0 if cfg["x_axis_type"]=="category" else 1,
+            key=f"xat_{cid}"
+        )
+        cfg["y_axis_type"] = st.selectbox(
+            "Y-axis Type", ["linear","log"],
+            index=0 if cfg["y_axis_type"]=="linear" else 1,
+            key=f"yat_{cid}"
         )
 
-        hide_x = st.checkbox("Hide X-axis", key=f"hx_{i}")
-        hide_y = st.checkbox("Hide Y-axis", key=f"hy_{i}")
+        # ---------------- DATA LABELS ----------------
+        cfg["show_labels"] = st.checkbox("Show Data Labels", cfg["show_labels"], key=f"lbl_{cid}")
+        if cfg["show_labels"]:
+            cfg["label_position"] = st.selectbox(
+                "Label Position",
+                ["outside","inside","top center","middle center","bottom center"],
+                key=f"lblpos_{cid}"
+            )
+            cfg["decimals"] = st.slider("Decimals",0,5,cfg["decimals"],key=f"dec_{cid}")
 
-        x_axis_type = st.selectbox("X-axis Type", ["category", "linear"], key=f"xat_{i}")
-        y_axis_type = st.selectbox("Y-axis Type", ["linear", "log"], key=f"yat_{i}")
+        # ---------------- CUSTOM SORT ----------------
+        cats = sorted(filtered_df[cfg["x"]].dropna().astype(str).unique())
+        cfg["custom_sort"] = st.multiselect(
+            "Custom Sort Order",
+            cats,
+            cfg["custom_sort"],
+            key=f"sort_{cid}"
+        )
 
-    # ===== AGG =====
-    if agg == "Count":
-        agg_df = filtered_df.groupby(x_col).size().reset_index(name="count")
-        y_val = "count"
-    elif agg == "Sum":
-        agg_df = filtered_df.groupby(x_col)[y_col].sum().reset_index()
-        y_val = y_col
+        # ---------------- CUSTOM COLORS ----------------
+        st.markdown("**Custom Colors**")
+        for v in cats:
+            cfg["custom_colors"][v] = st.color_picker(
+                v,
+                cfg["custom_colors"].get(v,"#1f77b4"),
+                key=f"clr_{cid}_{v}"
+            )
+
+        col1,col2 = st.columns(2)
+        with col1:
+            if st.button("🗑 Delete", key=f"del_{cid}"):
+                del st.session_state.charts[cid]
+                st.session_state.layout=[l for l in st.session_state.layout if l["i"]!=cid]
+                st.rerun()
+        with col2:
+            if st.button("📄 Duplicate", key=f"dup_{cid}"):
+                nid=f"chart_{st.session_state.chart_counter}"
+                st.session_state.chart_counter+=1
+                st.session_state.charts[nid]=deepcopy(cfg)
+                st.session_state.layout.append(
+                    dashboard.Item(nid,x=0,y=len(st.session_state.layout)*4,w=6,h=4)
+                )
+                st.rerun()
+
+# =====================================================
+# BUILD & DISPLAY
+# =====================================================
+figs = {}
+
+for cid,cfg in st.session_state.charts.items():
+    vdf = filtered_df.copy()
+
+    if cfg["agg"]=="Count":
+        agg_df=vdf.groupby(cfg["x"]).size().reset_index(name="count")
+        y_val="count"
+    elif cfg["agg"]=="Sum":
+        agg_df=vdf.groupby(cfg["x"])[cfg["y"]].sum().reset_index()
+        y_val=cfg["y"]
     else:
-        agg_df = filtered_df.groupby(x_col)[y_col].mean().reset_index()
-        y_val = y_col
+        agg_df=vdf.groupby(cfg["x"])[cfg["y"]].mean().reset_index()
+        y_val=cfg["y"]
 
-    # ===== CHART =====
-    if chart_type == "Bar":
-        fig = px.bar(agg_df, x=x_col, y=y_val)
-    elif chart_type == "Line":
-        fig = px.line(agg_df, x=x_col, y=y_val, markers=True)
-    elif chart_type == "Scatter":
-        fig = px.scatter(agg_df, x=x_col, y=y_val)
-    elif chart_type == "Pie":
-        fig = px.pie(agg_df, names=x_col, values=y_val)
-    else:
-        fig = px.histogram(filtered_df, x=x_col)
+    if cfg["custom_sort"]:
+        agg_df[cfg["x"]]=pd.Categorical(
+            agg_df[cfg["x"]].astype(str),
+            categories=cfg["custom_sort"],
+            ordered=True
+        )
+        agg_df=agg_df.sort_values(cfg["x"])
+
+    fig = (
+        px.bar(agg_df,x=cfg["x"],y=y_val,color=cfg["x"],
+               color_discrete_map=cfg["custom_colors"])
+        if cfg["type"]=="Bar"
+        else px.line(agg_df,x=cfg["x"],y=y_val,markers=True)
+        if cfg["type"]=="Line"
+        else px.scatter(agg_df,x=cfg["x"],y=y_val,color=cfg["x"])
+        if cfg["type"]=="Scatter"
+        else px.pie(agg_df,names=cfg["x"],values=y_val,
+                    color_discrete_map=cfg["custom_colors"])
+        if cfg["type"]=="Pie"
+        else px.histogram(vdf,x=cfg["x"])
+    )
+
+    if cfg["show_labels"]:
+        fig.update_traces(
+            texttemplate=f"%{{y:.{cfg['decimals']}f}}",
+            textposition=cfg["label_position"]
+        )
 
     fig.update_layout(
-        title=title,
-        height=450,
-        xaxis_title="" if hide_x else x_col,
-        yaxis_title="" if hide_y else y_col,
+        title=cfg["title"],
+        xaxis_title="" if cfg["hide_x"] else cfg["x_title"],
+        yaxis_title="" if cfg["hide_y"] else cfg["y_title"],
+        height=450
     )
-    fig.update_xaxes(type=x_axis_type)
-    fig.update_yaxes(type=y_axis_type)
+    fig.update_xaxes(type=cfg["x_axis_type"])
+    fig.update_yaxes(type=cfg["y_axis_type"])
 
-    charts_data.append({
-        "fig": fig,
-        "title": title,
-        "id": f"chart_{i}"
-    })
+    figs[cid]=fig
 
-# =====================================================
-# DISPLAY
-# =====================================================
 st.divider()
 st.markdown("## 📈 Dashboard")
 
 if not layout_mode:
-    # ORIGINAL BEHAVIOR
-    for c in charts_data:
-        st.plotly_chart(c["fig"], use_container_width=True)
-
+    for cid,fig in figs.items():
+        st.plotly_chart(fig,use_container_width=True,key=f"plot_{cid}")
 else:
-    # LAYOUT MODE (SAFE)
-    if "grid" not in st.session_state:
-        st.session_state.grid = [
-            dashboard.Item(c["id"], x=(i % 2) * 6, y=(i // 2) * 4, w=6, h=4)
-            for i, c in enumerate(charts_data)
-        ]
-
     with elements("dashboard"):
         with dashboard.Grid(
-            st.session_state.grid,
-            cols=12,
-            rowHeight=90,
+            st.session_state.layout,
+            cols=12,rowHeight=90,
             draggableHandle=".drag-handle",
-            onLayoutChange=lambda l: st.session_state.update({"grid": l})
+            onLayoutChange=lambda l: st.session_state.update({"layout":l})
         ):
-            for c in charts_data:
-                with mui.Card(key=c["id"], sx={"height": "100%"}):
+            for cid,fig in figs.items():
+                with mui.Card(key=cid,sx={"height":"100%"}):
                     mui.CardHeader(
-                        title=c["title"],
-                        className="drag-handle",
-                        sx={"cursor": "move"}
+                        title=st.session_state.charts[cid]["title"],
+                        className="drag-handle"
                     )
                     mui.CardContent(
-                        html.Div(
-                            c["fig"].to_html(include_plotlyjs="cdn"),
-                            dangerouslySetInnerHTML=True
-                        )
+                        html.Div(fig.to_html(include_plotlyjs="cdn"),
+                                 dangerouslySetInnerHTML=True)
                     )
-
-# =====================================================
-# EXPORT
-# =====================================================
-st.divider()
-if st.button("📥 Export All Charts (PNG / HTML fallback)"):
-    for c in charts_data:
-        try:
-            png = pio.to_image(c["fig"], format="png", width=3840, height=2160, scale=2)
-            st.download_button(
-                f"Download {c['title']}",
-                png,
-                f"{c['title']}.png",
-                mime="image/png",
-                key=c["id"]
-            )
-        except:
-            html_data = c["fig"].to_html(full_html=True)
-            st.download_button(
-                f"Download {c['title']}",
-                html_data,
-                f"{c['title']}.html",
-                mime="text/html",
-                key=f"{c['id']}_html"
-            )
-
-# =====================================================
-# FOOTER
-# =====================================================
-st.markdown("""
-<hr>
-<p style="text-align:center;color:#777">
-CSV Data Explorer • Layout Mode Enabled • Built by <strong>Naved Khan</strong>
-</p>
-""", unsafe_allow_html=True)
