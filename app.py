@@ -5,7 +5,7 @@ import plotly.express as px
 from copy import deepcopy
 from streamlit_elements import elements, dashboard, mui, html
 
-st.set_page_config(page_title="Data Analytical Tool", layout="wide")
+st.set_page_config(page_title="CSV Data Explorer BI", layout="wide")
 
 # =====================================================
 # RESET
@@ -33,8 +33,8 @@ if "chart_counter" not in st.session_state:
 st.markdown("""
 <div style="background:linear-gradient(90deg,#667eea,#764ba2);
             padding:16px;border-radius:10px;color:white;margin-bottom:16px;">
-<h3 style="margin:0">📊 Data Analytical Tool </h3>
-<small>Power BI–style visual and Data filtering</small>
+<h3 style="margin:0">📊 CSV Data Explorer BI</h3>
+<small>Power BI–style visual authoring</small>
 </div>
 """, unsafe_allow_html=True)
 
@@ -81,7 +81,6 @@ with st.expander("📋 Data Preview & Column Selection", expanded=True):
 
 cols = df.columns.tolist()
 num_cols = df.select_dtypes(include="number").columns.tolist()
-cat_cols = df.select_dtypes(exclude="number").columns.tolist()
 
 # =====================================================
 # GLOBAL FILTERS
@@ -89,11 +88,12 @@ cat_cols = df.select_dtypes(exclude="number").columns.tolist()
 st.sidebar.header("🔍 Global Filters")
 
 filtered_df = df.copy()
-for c in cat_cols:
-    vals = sorted(df[c].dropna().astype(str).unique())
-    sel = st.sidebar.multiselect(c, vals, key=f"gf_{c}")
-    if sel:
-        filtered_df = filtered_df[filtered_df[c].astype(str).isin(sel)]
+for c in cols:
+    if filtered_df[c].dtype == object:
+        vals = sorted(filtered_df[c].dropna().astype(str).unique())
+        sel = st.sidebar.multiselect(c, vals, key=f"gf_{c}")
+        if sel:
+            filtered_df = filtered_df[filtered_df[c].astype(str).isin(sel)]
 
 # =====================================================
 # LAYOUT MODE
@@ -107,9 +107,12 @@ layout_mode = st.sidebar.toggle("🧱 Layout Mode (Drag & Resize)", False)
 st.sidebar.divider()
 st.sidebar.header("➕ Add Visual")
 
-ct = st.sidebar.selectbox("Chart Type", ["Bar","Line","Scatter","Pie","Histogram"])
+ct = st.sidebar.selectbox(
+    "Chart Type",
+    ["Bar","Line","Scatter","Area","Pie","Donut","Histogram"]
+)
 x = st.sidebar.selectbox("X-axis", cols)
-y = st.sidebar.selectbox("Y-axis", num_cols) if ct!="Histogram" else None
+y = st.sidebar.selectbox("Y-axis", cols)
 
 if st.sidebar.button("➕ Add Chart"):
     cid = f"chart_{st.session_state.chart_counter}"
@@ -119,30 +122,32 @@ if st.sidebar.button("➕ Add Chart"):
         "type": ct,
         "x": x,
         "y": y,
-        "title": f"{ct} Chart",
+        "aggregation": "Count",
 
-        # axis / labels (used conditionally)
+        "title": f"{ct} Chart",
         "x_title": x,
         "y_title": y,
+
         "hide_x": False,
         "hide_y": False,
+
         "x_axis_type": "category",
         "y_axis_type": "linear",
 
-        # labels
         "show_labels": False,
         "label_position": "outside",
         "decimals": 2,
-        "pie_label_mode": "Value + Percent",
 
-        # sorting & colors
+        "legend": True,
+        "legend_pos": "v",
+
         "custom_sort": [],
         "custom_colors": {},
 
-        # histogram
+        "pie_label_mode": "label+percent",
+
         "bins": 30,
 
-        # filters
         "filters": {}
     }
 
@@ -152,27 +157,35 @@ if st.sidebar.button("➕ Add Chart"):
     st.rerun()
 
 # =====================================================
-# VISUAL SETTINGS (CHART-TYPE AWARE)
+# VISUAL SETTINGS (CHART-TYPE AWARE, NON-RESTRICTIVE)
 # =====================================================
 st.sidebar.divider()
 st.sidebar.header("⚙️ Visual Settings")
 
+AGGS = ["Count","Sum","Average","Min","Max"]
+
 for cid, cfg in list(st.session_state.charts.items()):
-    chart_type = cfg["type"]
-    is_axis = chart_type in ["Bar","Line","Scatter"]
-    is_pie = chart_type == "Pie"
-    is_hist = chart_type == "Histogram"
+    is_axis = cfg["type"] not in ["Pie","Donut","Histogram"]
+    is_pie = cfg["type"] in ["Pie","Donut"]
 
     with st.sidebar.expander(cfg["title"], expanded=False):
 
-        # -------- COMMON --------
         cfg["title"] = st.text_input("Chart Title", cfg["title"], key=f"t_{cid}")
 
-        # -------- AXIS CHARTS --------
-        if is_axis:
-            cfg["x_title"] = st.text_input("X-axis Title", cfg["x_title"], key=f"xt_{cid}")
-            cfg["y_title"] = st.text_input("Y-axis Title", cfg["y_title"], key=f"yt_{cid}")
+        cfg["aggregation"] = st.selectbox(
+            "Aggregation",
+            AGGS,
+            index=AGGS.index(cfg["aggregation"]),
+            key=f"agg_{cid}"
+        )
 
+        cfg["x"] = st.selectbox("X-axis", cols, index=cols.index(cfg["x"]), key=f"x_{cid}")
+        cfg["y"] = st.selectbox("Y-axis", cols, index=cols.index(cfg["y"]), key=f"y_{cid}")
+
+        cfg["x_title"] = st.text_input("X-axis Title", cfg["x_title"], key=f"xt_{cid}")
+        cfg["y_title"] = st.text_input("Y-axis Title", cfg["y_title"], key=f"yt_{cid}")
+
+        if is_axis:
             cfg["hide_x"] = st.checkbox("Hide X-axis", cfg["hide_x"], key=f"hx_{cid}")
             cfg["hide_y"] = st.checkbox("Hide Y-axis", cfg["hide_y"], key=f"hy_{cid}")
 
@@ -187,53 +200,46 @@ for cid, cfg in list(st.session_state.charts.items()):
                 key=f"yat_{cid}"
             )
 
-            cfg["show_labels"] = st.checkbox("Show Data Labels", cfg["show_labels"], key=f"lbl_{cid}")
-            if cfg["show_labels"]:
-                cfg["label_position"] = st.selectbox(
-                    "Label Position",
-                    ["outside","inside","top center","middle center","bottom center"],
-                    key=f"lblpos_{cid}"
-                )
-                cfg["decimals"] = st.slider("Decimals",0,5,cfg["decimals"],key=f"dec_{cid}")
-
-            cats = sorted(filtered_df[cfg["x"]].dropna().astype(str).unique())
-            cfg["custom_sort"] = st.multiselect(
-                "Custom Sort Order", cats, cfg["custom_sort"], key=f"sort_{cid}"
+        cfg["legend"] = st.checkbox("Show Legend", cfg["legend"], key=f"leg_{cid}")
+        if cfg["legend"]:
+            cfg["legend_pos"] = st.selectbox(
+                "Legend Position", ["v","h"],
+                index=0 if cfg["legend_pos"]=="v" else 1,
+                key=f"legpos_{cid}"
             )
 
-            st.markdown("**Custom Colors**")
-            for v in cats:
-                cfg["custom_colors"][v] = st.color_picker(
-                    v, cfg["custom_colors"].get(v,"#1f77b4"), key=f"clr_{cid}_{v}"
-                )
+        cfg["show_labels"] = st.checkbox("Show Data Labels", cfg["show_labels"], key=f"lbl_{cid}")
+        if cfg["show_labels"]:
+            cfg["label_position"] = st.selectbox(
+                "Label Position",
+                ["outside","inside","top center","middle center","bottom center"],
+                key=f"lblpos_{cid}"
+            )
+            cfg["decimals"] = st.slider("Decimals",0,5,cfg["decimals"],key=f"dec_{cid}")
 
-        # -------- PIE --------
         if is_pie:
             cfg["pie_label_mode"] = st.selectbox(
-                "Label Display",
-                ["Value","Percent","Value + Percent"],
+                "Pie Labels",
+                ["label","percent","label+percent","value","value+percent"],
                 key=f"plm_{cid}"
             )
-            cfg["decimals"] = st.slider("Decimals",0,5,cfg["decimals"],key=f"pdec_{cid}")
 
-            cats = sorted(filtered_df[cfg["x"]].dropna().astype(str).unique())
-            st.markdown("**Custom Colors**")
-            for v in cats:
-                cfg["custom_colors"][v] = st.color_picker(
-                    v, cfg["custom_colors"].get(v,"#1f77b4"), key=f"pclr_{cid}_{v}"
-                )
+        cats = sorted(filtered_df[cfg["x"]].dropna().astype(str).unique())
+        cfg["custom_sort"] = st.multiselect(
+            "Custom Sort Order",
+            cats,
+            cfg["custom_sort"],
+            key=f"sort_{cid}"
+        )
 
-        # -------- HISTOGRAM --------
-        if is_hist:
-            cfg["bins"] = st.slider("Bins",5,100,cfg["bins"],key=f"bins_{cid}")
-
-        # -------- VISUAL FILTERS --------
-        st.markdown("**Visual-level Filters**")
-        for c in cat_cols:
-            opts = sorted(df[c].dropna().astype(str).unique())
-            cfg["filters"][c] = st.multiselect(
-                c, opts, cfg["filters"].get(c, []), key=f"vf_{cid}_{c}"
+        st.markdown("**Custom Colors**")
+        for v in cats:
+            cfg["custom_colors"][v] = st.color_picker(
+                v, cfg["custom_colors"].get(v,"#1f77b4"), key=f"clr_{cid}_{v}"
             )
+
+        if cfg["type"]=="Histogram":
+            cfg["bins"] = st.slider("Bins",5,100,cfg["bins"],key=f"bins_{cid}")
 
         col1,col2 = st.columns(2)
         with col1:
@@ -252,55 +258,81 @@ for cid, cfg in list(st.session_state.charts.items()):
                 st.rerun()
 
 # =====================================================
-# BUILD & DISPLAY FIGURES
+# BUILD FIGURES (FULL AGGREGATION SUPPORT)
 # =====================================================
 figs = {}
 
 for cid,cfg in st.session_state.charts.items():
     vdf = filtered_df.copy()
+
     for c,v in cfg["filters"].items():
         if v:
             vdf = vdf[vdf[c].astype(str).isin(v)]
 
-    if cfg["type"]=="Histogram":
-        fig = px.histogram(vdf, x=cfg["x"], nbins=cfg["bins"])
+    # ----- AGG -----
+    if cfg["aggregation"]=="Count":
+        agg_df = vdf.groupby(cfg["x"]).size().reset_index(name="value")
     else:
-        agg_df = vdf.groupby(cfg["x"]).size().reset_index(name="count")
-        fig = (
-            px.bar(agg_df,x=cfg["x"],y="count",color=cfg["x"],
-                   color_discrete_map=cfg["custom_colors"])
-            if cfg["type"]=="Bar"
-            else px.line(agg_df,x=cfg["x"],y="count",markers=True)
-            if cfg["type"]=="Line"
-            else px.scatter(agg_df,x=cfg["x"],y="count",color=cfg["x"])
-            if cfg["type"]=="Scatter"
-            else px.pie(agg_df,names=cfg["x"],values="count",
-                        color_discrete_map=cfg["custom_colors"])
-        )
+        vdf[cfg["y"]] = pd.to_numeric(vdf[cfg["y"]], errors="coerce")
+        agg_map = {
+            "Sum":"sum","Average":"mean","Min":"min","Max":"max"
+        }
+        agg_df = vdf.groupby(cfg["x"])[cfg["y"]].agg(
+            agg_map[cfg["aggregation"]]
+        ).reset_index(name="value")
 
-    if cfg["type"] in ["Bar","Line","Scatter"] and cfg["show_labels"]:
+    if cfg["custom_sort"]:
+        agg_df[cfg["x"]] = pd.Categorical(
+            agg_df[cfg["x"]].astype(str),
+            categories=cfg["custom_sort"],
+            ordered=True
+        )
+        agg_df = agg_df.sort_values(cfg["x"])
+
+    # ----- CHART -----
+    if cfg["type"]=="Bar":
+        fig = px.bar(
+            agg_df,x=cfg["x"],y="value",color=cfg["x"],
+            color_discrete_map=cfg["custom_colors"]
+        )
+    elif cfg["type"]=="Line":
+        fig = px.line(agg_df,x=cfg["x"],y="value",markers=True)
+    elif cfg["type"]=="Scatter":
+        fig = px.scatter(agg_df,x=cfg["x"],y="value",color=cfg["x"])
+    elif cfg["type"]=="Area":
+        fig = px.area(agg_df,x=cfg["x"],y="value")
+    elif cfg["type"]=="Pie":
+        fig = px.pie(
+            agg_df,names=cfg["x"],values="value",
+            color_discrete_map=cfg["custom_colors"]
+        )
+    elif cfg["type"]=="Donut":
+        fig = px.pie(
+            agg_df,names=cfg["x"],values="value",hole=0.4,
+            color_discrete_map=cfg["custom_colors"]
+        )
+    else:
+        fig = px.histogram(vdf,x=cfg["x"],nbins=cfg["bins"])
+
+    if cfg["show_labels"] and cfg["type"] not in ["Pie","Donut"]:
         fig.update_traces(
             texttemplate=f"%{{y:.{cfg['decimals']}f}}",
             textposition=cfg["label_position"]
         )
 
-    if cfg["type"]=="Pie":
-        fig.update_traces(
-            textinfo={
-                "Value":"value",
-                "Percent":"percent",
-                "Value + Percent":"value+percent"
-            }[cfg["pie_label_mode"]]
-        )
+    if cfg["type"] in ["Pie","Donut"]:
+        fig.update_traces(textinfo=cfg["pie_label_mode"])
 
     fig.update_layout(
         title=cfg["title"],
-        xaxis_title="" if cfg.get("hide_x") else cfg.get("x_title"),
-        yaxis_title="" if cfg.get("hide_y") else cfg.get("y_title"),
+        showlegend=cfg["legend"],
+        legend_orientation="v" if cfg["legend_pos"]=="v" else "h",
+        xaxis_title="" if cfg["hide_x"] else cfg["x_title"],
+        yaxis_title="" if cfg["hide_y"] else cfg["y_title"],
         height=450
     )
-    fig.update_xaxes(type=cfg.get("x_axis_type","category"))
-    fig.update_yaxes(type=cfg.get("y_axis_type","linear"))
+    fig.update_xaxes(type=cfg["x_axis_type"])
+    fig.update_yaxes(type=cfg["y_axis_type"])
 
     figs[cid]=fig
 
@@ -323,8 +355,10 @@ else:
         ):
             for cid,fig in figs.items():
                 with mui.Card(key=cid,sx={"height":"100%"}):
-                    mui.CardHeader(title=st.session_state.charts[cid]["title"],
-                                   className="drag-handle")
+                    mui.CardHeader(
+                        title=st.session_state.charts[cid]["title"],
+                        className="drag-handle"
+                    )
                     mui.CardContent(
                         html.Div(fig.to_html(include_plotlyjs="cdn"),
                                  dangerouslySetInnerHTML=True)
