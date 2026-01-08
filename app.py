@@ -2,204 +2,277 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import json
+import plotly.io as pio
+import streamlit.components.v1 as components
 
-from streamlit_elements import elements, dashboard, mui
-
-st.set_page_config(layout="wide")
+# Layout mode deps (safe)
+from streamlit_elements import elements, dashboard, mui, html
 
 # =====================================================
-# STATE INIT
+# APP CONFIG
 # =====================================================
+st.set_page_config(page_title="CSV Data Explorer", layout="wide")
 
-if "layout" not in st.session_state:
-    st.session_state.layout = []
-
-if "visuals" not in st.session_state:
-    st.session_state.visuals = {}
+# =====================================================
+# RESET
+# =====================================================
+def reset_app():
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.rerun()
 
 # =====================================================
 # HEADER
 # =====================================================
-
 st.markdown("""
 <style>
-.header {
+.header-container {
     background: linear-gradient(90deg,#667eea,#764ba2);
-    padding:16px 24px;
-    border-radius:10px;
     color:white;
-    margin-bottom:16px;
+    padding:18px 28px;
+    border-radius:10px;
+    margin-bottom:20px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
 }
 </style>
-<div class="header">
-<h2>📊 BI Dashboard – Layout Mode</h2>
-<p>Drag • Resize • Configure Visuals (Power BI Style)</p>
+<div class="header-container">
+  <div>
+    <h3 style="margin:0">📊 CSV Data Explorer</h3>
+    <small>by Naved Khan</small>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
-# =====================================================
-# FILE UPLOAD
-# =====================================================
+if st.button("🔄 Back to Start"):
+    reset_app()
 
-uploaded = st.file_uploader("Upload CSV", type=["csv"])
+# =====================================================
+# FILE UPLOAD (CSV + EXCEL)
+# =====================================================
+st.divider()
+
+uploaded = st.session_state.get("file_upload")
+
+if uploaded is None:
+    with st.expander("📁 File Controls", expanded=True):
+        uploaded_file = st.file_uploader(
+            "Upload CSV / Excel",
+            type=["csv", "xlsx", "xls"]
+        )
+        if uploaded_file:
+            st.session_state.file_upload = uploaded_file
+            st.rerun()
+
+uploaded = st.session_state.get("file_upload")
 if not uploaded:
     st.stop()
 
-df = pd.read_csv(uploaded)
+# =====================================================
+# LOAD DATA
+# =====================================================
+if "raw_df" not in st.session_state:
+    if uploaded.name.endswith((".xlsx", ".xls")):
+        st.session_state.raw_df = pd.read_excel(uploaded)
+    else:
+        st.session_state.raw_df = pd.read_csv(uploaded)
+
+raw_df = st.session_state.raw_df.copy()
+
+# =====================================================
+# COLUMN SELECTION
+# =====================================================
+with st.expander("📋 Data Preview & Column Selection", expanded=True):
+    selected_cols = st.multiselect(
+        "Columns",
+        raw_df.columns.tolist(),
+        default=raw_df.columns.tolist()
+    )
+    df = raw_df[selected_cols].copy()
+    st.dataframe(df.head(50), use_container_width=True)
+
+# =====================================================
+# COLUMN GROUPS
+# =====================================================
+cols = df.columns.tolist()
 num_cols = df.select_dtypes(include="number").columns.tolist()
 cat_cols = df.select_dtypes(exclude="number").columns.tolist()
 
 # =====================================================
-# GLOBAL FILTERS
+# FILTERS (GLOBAL)
 # =====================================================
+st.sidebar.header("🔍 Filters")
 
-st.sidebar.header("🔍 Global Filters")
-
-global_filters = {}
-for col in cat_cols:
-    vals = sorted(df[col].dropna().astype(str).unique())
-    sel = st.sidebar.multiselect(col, vals, key=f"g_{col}")
+filters = {}
+for c in cat_cols:
+    vals = sorted(df[c].dropna().astype(str).unique())
+    sel = st.sidebar.multiselect(c, vals, key=f"f_{c}")
     if sel:
-        global_filters[col] = sel
+        filters[c] = sel
 
 filtered_df = df.copy()
-for col, vals in global_filters.items():
-    filtered_df = filtered_df[filtered_df[col].astype(str).isin(vals)]
+for c, v in filters.items():
+    filtered_df = filtered_df[filtered_df[c].astype(str).isin(v)]
 
 # =====================================================
-# ADD VISUAL
+# METRICS
 # =====================================================
+m1, m2, m3 = st.columns(3)
+m1.metric("Total Rows", len(df))
+m2.metric("Filtered Rows", len(filtered_df))
+m3.metric("Active Filters", len(filters))
 
+# =====================================================
+# LAYOUT MODE TOGGLE
+# =====================================================
 st.sidebar.divider()
-st.sidebar.header("➕ Add Visual")
-
-v_type = st.sidebar.selectbox("Chart Type", ["Bar", "Line", "Scatter", "Pie"])
-x_col = st.sidebar.selectbox("X-axis", cat_cols + num_cols)
-y_col = st.sidebar.selectbox("Y-axis", num_cols)
-
-if st.sidebar.button("➕ Add to Canvas"):
-    vid = f"visual_{len(st.session_state.visuals)+1}"
-
-    st.session_state.visuals[vid] = {
-        "type": v_type,
-        "x": x_col,
-        "y": y_col,
-        "title": f"{v_type} Chart",
-        "agg": "Count",
-        "hide_x": False,
-        "hide_y": False,
-        "x_title": x_col,
-        "y_title": y_col,
-        "x_axis_type": "category",
-        "y_axis_type": "linear",
-        "filters": {}
-    }
-
-    st.session_state.layout.append(
-        dashboard.Item(vid, x=0, y=0, w=6, h=4)
-    )
+layout_mode = st.sidebar.toggle("🧱 Layout Mode (Drag & Resize)", value=False)
 
 # =====================================================
-# DASHBOARD CANVAS
+# CHART CONFIG
 # =====================================================
+st.sidebar.divider()
+num_charts = st.sidebar.slider("Number of Charts", 1, 4, 1)
 
-with elements("dashboard"):
+charts_data = []
 
-    with dashboard.Grid(
-        st.session_state.layout,
-        cols=12,
-        rowHeight=90,
-        draggableHandle=".drag-handle",
-        onLayoutChange=lambda l: st.session_state.update({"layout": l}),
-    ):
+for i in range(num_charts):
+    with st.sidebar.expander(f"📊 Chart {i+1}", expanded=False):
+        chart_type = st.selectbox(
+            "Chart Type",
+            ["Bar", "Line", "Scatter", "Pie", "Histogram"],
+            key=f"ct_{i}"
+        )
+        x_col = st.selectbox("X-axis", cols, key=f"x_{i}")
+        y_col = None
+        if chart_type != "Histogram":
+            y_col = st.selectbox("Y-axis", num_cols, key=f"y_{i}")
 
-        for vid, cfg in st.session_state.visuals.items():
+        agg = st.selectbox("Aggregation", ["Count", "Sum", "Average"], key=f"a_{i}")
 
-            # ---------------- DATA (VISUAL LEVEL FILTERS) ----------------
-            vdf = filtered_df.copy()
-            for c, vals in cfg["filters"].items():
-                vdf = vdf[vdf[c].astype(str).isin(vals)]
-
-            # ---------------- AGG ----------------
-            if cfg["agg"] == "Count":
-                agg_df = vdf.groupby(cfg["x"]).size().reset_index(name="count")
-                y_val = "count"
-            else:
-                agg_df = vdf.groupby(cfg["x"])[cfg["y"]].mean().reset_index()
-                y_val = cfg["y"]
-
-            # ---------------- CHART ----------------
-            if cfg["type"] == "Bar":
-                fig = px.bar(agg_df, x=cfg["x"], y=y_val)
-            elif cfg["type"] == "Line":
-                fig = px.line(agg_df, x=cfg["x"], y=y_val, markers=True)
-            elif cfg["type"] == "Scatter":
-                fig = px.scatter(agg_df, x=cfg["x"], y=y_val)
-            else:
-                fig = px.pie(agg_df, names=cfg["x"], values=y_val)
-
-            fig.update_layout(
-                title=cfg["title"],
-                xaxis_title="" if cfg["hide_x"] else cfg["x_title"],
-                yaxis_title="" if cfg["hide_y"] else cfg["y_title"],
-                xaxis_type=cfg["x_axis_type"],
-                yaxis_type=cfg["y_axis_type"],
-                height=100 * st.session_state.layout[
-                    next(i for i, l in enumerate(st.session_state.layout) if l["i"] == vid)
-                ]["h"]
-            )
-
-            # ---------------- CARD ----------------
-            with mui.Card(key=vid, sx={"height": "100%"}):
-                mui.CardHeader(
-                    title=cfg["title"],
-                    className="drag-handle",
-                    sx={"cursor": "move"},
-                    action=mui.IconButton("⚙️", onClick=lambda v=vid: st.session_state.update({"edit": v}))
-                )
-                mui.CardContent(st.plotly_chart(fig, use_container_width=True))
-
-# =====================================================
-# VISUAL SETTINGS PANEL (POWER BI FORMAT PANE)
-# =====================================================
-
-if "edit" in st.session_state:
-    vid = st.session_state.edit
-    cfg = st.session_state.visuals[vid]
-
-    st.sidebar.divider()
-    st.sidebar.header(f"⚙️ Visual Settings")
-
-    cfg["title"] = st.sidebar.text_input("Chart Title", cfg["title"])
-    cfg["agg"] = st.sidebar.selectbox("Aggregation", ["Count", "Average"], index=0 if cfg["agg"]=="Count" else 1)
-
-    cfg["hide_x"] = st.sidebar.checkbox("Hide X-axis", cfg["hide_x"])
-    cfg["hide_y"] = st.sidebar.checkbox("Hide Y-axis", cfg["hide_y"])
-
-    cfg["x_title"] = st.sidebar.text_input("X-axis Title", cfg["x_title"])
-    cfg["y_title"] = st.sidebar.text_input("Y-axis Title", cfg["y_title"])
-
-    cfg["x_axis_type"] = st.sidebar.selectbox("X-axis Type", ["category", "linear"], index=0)
-    cfg["y_axis_type"] = st.sidebar.selectbox("Y-axis Type", ["linear", "log"], index=0)
-
-    st.sidebar.markdown("**Visual Filters**")
-    for col in cat_cols:
-        opts = sorted(df[col].dropna().astype(str).unique())
-        cfg["filters"][col] = st.sidebar.multiselect(
-            col, opts, cfg["filters"].get(col, [])
+        title = st.text_input(
+            "Chart Title",
+            f"{agg} of {y_col} by {x_col}" if y_col else f"{chart_type} of {x_col}",
+            key=f"t_{i}"
         )
 
-    if st.sidebar.button("❌ Close Settings"):
-        del st.session_state.edit
+        hide_x = st.checkbox("Hide X-axis", key=f"hx_{i}")
+        hide_y = st.checkbox("Hide Y-axis", key=f"hy_{i}")
+
+        x_axis_type = st.selectbox("X-axis Type", ["category", "linear"], key=f"xat_{i}")
+        y_axis_type = st.selectbox("Y-axis Type", ["linear", "log"], key=f"yat_{i}")
+
+    # ===== AGG =====
+    if agg == "Count":
+        agg_df = filtered_df.groupby(x_col).size().reset_index(name="count")
+        y_val = "count"
+    elif agg == "Sum":
+        agg_df = filtered_df.groupby(x_col)[y_col].sum().reset_index()
+        y_val = y_col
+    else:
+        agg_df = filtered_df.groupby(x_col)[y_col].mean().reset_index()
+        y_val = y_col
+
+    # ===== CHART =====
+    if chart_type == "Bar":
+        fig = px.bar(agg_df, x=x_col, y=y_val)
+    elif chart_type == "Line":
+        fig = px.line(agg_df, x=x_col, y=y_val, markers=True)
+    elif chart_type == "Scatter":
+        fig = px.scatter(agg_df, x=x_col, y=y_val)
+    elif chart_type == "Pie":
+        fig = px.pie(agg_df, names=x_col, values=y_val)
+    else:
+        fig = px.histogram(filtered_df, x=x_col)
+
+    fig.update_layout(
+        title=title,
+        height=450,
+        xaxis_title="" if hide_x else x_col,
+        yaxis_title="" if hide_y else y_col,
+    )
+    fig.update_xaxes(type=x_axis_type)
+    fig.update_yaxes(type=y_axis_type)
+
+    charts_data.append({
+        "fig": fig,
+        "title": title,
+        "id": f"chart_{i}"
+    })
+
+# =====================================================
+# DISPLAY
+# =====================================================
+st.divider()
+st.markdown("## 📈 Dashboard")
+
+if not layout_mode:
+    # ORIGINAL BEHAVIOR
+    for c in charts_data:
+        st.plotly_chart(c["fig"], use_container_width=True)
+
+else:
+    # LAYOUT MODE (SAFE)
+    if "grid" not in st.session_state:
+        st.session_state.grid = [
+            dashboard.Item(c["id"], x=(i % 2) * 6, y=(i // 2) * 4, w=6, h=4)
+            for i, c in enumerate(charts_data)
+        ]
+
+    with elements("dashboard"):
+        with dashboard.Grid(
+            st.session_state.grid,
+            cols=12,
+            rowHeight=90,
+            draggableHandle=".drag-handle",
+            onLayoutChange=lambda l: st.session_state.update({"grid": l})
+        ):
+            for c in charts_data:
+                with mui.Card(key=c["id"], sx={"height": "100%"}):
+                    mui.CardHeader(
+                        title=c["title"],
+                        className="drag-handle",
+                        sx={"cursor": "move"}
+                    )
+                    mui.CardContent(
+                        html.Div(
+                            c["fig"].to_html(include_plotlyjs="cdn"),
+                            dangerouslySetInnerHTML=True
+                        )
+                    )
+
+# =====================================================
+# EXPORT
+# =====================================================
+st.divider()
+if st.button("📥 Export All Charts (PNG / HTML fallback)"):
+    for c in charts_data:
+        try:
+            png = pio.to_image(c["fig"], format="png", width=3840, height=2160, scale=2)
+            st.download_button(
+                f"Download {c['title']}",
+                png,
+                f"{c['title']}.png",
+                mime="image/png",
+                key=c["id"]
+            )
+        except:
+            html_data = c["fig"].to_html(full_html=True)
+            st.download_button(
+                f"Download {c['title']}",
+                html_data,
+                f"{c['title']}.html",
+                mime="text/html",
+                key=f"{c['id']}_html"
+            )
 
 # =====================================================
 # FOOTER
 # =====================================================
-
 st.markdown("""
 <hr>
 <p style="text-align:center;color:#777">
-BI Dashboard • Layout Mode • Built by <strong>Naved Khan</strong>
+CSV Data Explorer • Layout Mode Enabled • Built by <strong>Naved Khan</strong>
 </p>
 """, unsafe_allow_html=True)
