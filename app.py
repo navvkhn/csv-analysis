@@ -95,8 +95,12 @@ st.sidebar.caption(f"Rows after global filters: {len(filtered_df)}")
 st.sidebar.divider()
 num_charts = st.sidebar.slider("Number of Charts", 1, 4, 1)
 
+# Init state holders
 if "visual_filters" not in st.session_state:
     st.session_state.visual_filters = {}
+
+if "custom_sort" not in st.session_state:
+    st.session_state.custom_sort = {}
 
 # =====================================================
 # CHART CONFIGURATION
@@ -151,6 +155,27 @@ for chart_num in range(num_charts):
                 key=f"legpos_{chart_num}"
             )
 
+        # ---------------- SORTING (NEW) ----------------
+        with st.expander("Sorting"):
+            sort_mode = st.selectbox(
+                "Sort By",
+                ["None", "Value (Asc)", "Value (Desc)", "Manual Order"],
+                key=f"sort_mode_{chart_num}"
+            )
+
+            manual_order = []
+            if sort_mode == "Manual Order":
+                manual_order = st.multiselect(
+                    "Custom Category Order",
+                    filtered_df[x_col].astype(str).unique().tolist(),
+                    key=f"manual_sort_{chart_num}"
+                )
+
+            st.session_state.custom_sort[chart_num] = {
+                "mode": sort_mode,
+                "order": manual_order
+            }
+
         # ---------------- VISUAL FILTERS ----------------
         with st.expander("Filters (Visual-level)"):
             chart_filters = st.session_state.visual_filters.get(chart_num, {})
@@ -164,21 +189,6 @@ for chart_num in range(num_charts):
                         key=f"vf_{chart_num}_{c}"
                     )
             st.session_state.visual_filters[chart_num] = chart_filters
-
-        # ---------------- DELETE / DUPLICATE ----------------
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🗑 Delete", key=f"del_{chart_num}"):
-                st.session_state.num_charts = max(1, num_charts - 1)
-                st.rerun()
-        with col2:
-            if st.button("📄 Duplicate", key=f"dup_{chart_num}"):
-                new_idx = num_charts
-                for k, v in list(st.session_state.items()):
-                    if k.endswith(f"_{chart_num}"):
-                        st.session_state[k.replace(f"_{chart_num}", f"_{new_idx}")] = deepcopy(v)
-                st.session_state.num_charts = num_charts + 1
-                st.rerun()
 
     # =================================================
     # DATA PIPELINE (GLOBAL → VISUAL FILTER → AGG)
@@ -201,6 +211,23 @@ for chart_num in range(num_charts):
         agg_df = chart_df.groupby(x_col)[y_col].agg(
             agg_map[aggregation]
         ).reset_index(name="value")
+
+    # ---------------- APPLY SORTING ----------------
+    sort_cfg = st.session_state.custom_sort.get(chart_num, {})
+
+    if sort_cfg.get("mode") == "Value (Asc)":
+        agg_df = agg_df.sort_values("value", ascending=True)
+
+    elif sort_cfg.get("mode") == "Value (Desc)":
+        agg_df = agg_df.sort_values("value", ascending=False)
+
+    elif sort_cfg.get("mode") == "Manual Order" and sort_cfg.get("order"):
+        agg_df[x_col] = pd.Categorical(
+            agg_df[x_col].astype(str),
+            categories=sort_cfg["order"],
+            ordered=True
+        )
+        agg_df = agg_df.sort_values(x_col)
 
     # =================================================
     # CHART CREATION
