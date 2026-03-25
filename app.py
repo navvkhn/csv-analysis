@@ -304,7 +304,7 @@ with st.popover("💬 Ask AI"):
                     full_response = ""
                     
                     stream = client.chat.completions.create(
-                        model="qwen3.5:2b", 
+                        model="qwen2.5:3b", 
                         messages=messages,
                         stream=True
                     )
