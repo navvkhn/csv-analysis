@@ -10,20 +10,21 @@ from openai import OpenAI
 st.set_page_config(page_title="Data Explorer & AI", layout="wide", page_icon="📊")
 
 # =====================================================
-# AGGRESSIVE UI/UX CSS STYLING
+# AGGRESSIVE UI/UX CSS STYLING (FIXED)
 # =====================================================
 st.markdown("""
 <style>
-    /* 1. Force the popover to the bottom right */
-    [data-testid="stPopover"] {
+    /* 1. Force the popover container to bottom right, and RESTRICT WIDTH */
+    div[data-testid="stPopover"] {
         position: fixed !important;
         bottom: 30px !important;
         right: 30px !important;
+        width: max-content !important; /* CRITICAL FIX: Stops the button from stretching */
         z-index: 999999 !important;
     }
     
-    /* 2. Style the popover button as a modern SaaS pill */
-    [data-testid="stPopover"] > button {
+    /* 2. Style the button as a sleek pill */
+    div[data-testid="stPopover"] > button {
         border-radius: 30px !important;
         padding: 12px 28px !important;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
@@ -34,26 +35,28 @@ st.markdown("""
         font-weight: 600 !important;
         letter-spacing: 0.5px !important;
         transition: all 0.2s ease !important;
+        width: auto !important; /* Ensures button stays compact */
     }
     
-    [data-testid="stPopover"] > button:hover {
+    div[data-testid="stPopover"] > button:hover {
         transform: translateY(-2px) !important;
         box-shadow: 0 12px 28px rgba(102, 126, 234, 0.5) !important;
     }
     
-    /* 3. Style the open chat window */
-    [data-testid="stPopoverBody"] {
-        width: 400px !important;
+    /* 3. Style the open chat window (Popover Body) */
+    div[data-testid="stPopoverBody"] {
+        width: 380px !important;
         height: 600px !important;
         padding: 20px !important;
         border-radius: 16px !important;
         box-shadow: 0 10px 40px rgba(0,0,0,0.15) !important;
         border: 1px solid #f0f2f6 !important;
+        margin-bottom: 10px !important; /* Pushes window slightly above the button */
     }
     
-    /* 4. Make sure the bottom of the page isn't hidden by the widget */
-    [data-testid="stMainBlockContainer"] {
-        padding-bottom: 100px !important;
+    /* 4. Pad the bottom of the main app so content isn't hidden by the widget */
+    div[data-testid="stMainBlockContainer"] {
+        padding-bottom: 120px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -76,12 +79,11 @@ def load_data(file):
     return pd.read_csv(file)
 
 def get_smart_categorical_column(df, cols):
-    """UX Feature: Prevents the 'barcode' chart by finding a good category (e.g., Status, Priority)"""
+    """UX Feature: Prevents the 'barcode' chart by finding a good category"""
     for col in cols:
-        # Look for a column with between 2 and 40 unique values (perfect for bar charts)
         if df[col].nunique() > 1 and df[col].nunique() < 40:
             return cols.index(col)
-    return 0 # Fallback to first column
+    return 0 
 
 def reset_app():
     for k in list(st.session_state.keys()):
@@ -107,7 +109,7 @@ uploaded = st.session_state.get("file_upload")
 if uploaded is None:
     with st.container(border=True):
         st.subheader("📁 Upload Dataset")
-        file = st.file_uploader("Drop your IT logs, performance data, or standard CSV/Excel files here.", type=["csv", "xlsx", "xls"])
+        file = st.file_uploader("Drop your CSV/Excel files here.", type=["csv", "xlsx", "xls"])
         if file:
             st.session_state.file_upload = file
             st.rerun()
@@ -143,7 +145,6 @@ st.sidebar.markdown("### 🔍 Global Filters")
 filtered_df = df.copy()
 
 for c in cols:
-    # UX: Only show filters for manageable categories (prevents lag and visual clutter)
     if filtered_df[c].nunique() < 50:
         options = sorted(filtered_df[c].dropna().astype(str).unique())
         selected = st.sidebar.multiselect(c, options, key=f"gf_{c}")
@@ -164,11 +165,8 @@ AGGS = ["Count", "Sum", "Average", "Min", "Max"]
 for chart_num in range(num_charts):
     with st.sidebar.expander(f"📊 Chart {chart_num + 1} Config", expanded=(chart_num==0)):
         chart_type = st.selectbox("Chart Type", ["Bar", "Line", "Scatter", "Area", "Pie", "Donut", "Histogram"], key=f"type_{chart_num}")
-        
-        # UX: Use the smart default for X-axis
         x_col = st.selectbox("X-axis (Category)", cols, index=default_x_index, key=f"x_{chart_num}")
         y_col = st.selectbox("Y-axis (Value)", cols, key=f"y_{chart_num}")
-        
         aggregation = st.selectbox("Aggregation", AGGS, key=f"agg_{chart_num}")
         title = st.text_input("Chart Title", f"{aggregation} by {x_col}", key=f"title_{chart_num}")
 
@@ -194,14 +192,12 @@ for chart_num in range(num_charts):
                 agg_df = chart_df.groupby(x_col)[y_col].agg(agg_map[aggregation]).reset_index(name="value")
                 y_target = "value"
 
-            # Apply Sorting
             sort_cfg = st.session_state.custom_sort.get(chart_num, {})
             if sort_cfg.get("mode") == "Value (Asc)":
                 agg_df = agg_df.sort_values(y_target, ascending=True)
             elif sort_cfg.get("mode") == "Value (Desc)":
                 agg_df = agg_df.sort_values(y_target, ascending=False)
 
-            # Build Figure (UX: Cleaner default colors)
             color_seq = px.colors.qualitative.Pastel
             
             if chart_type == "Bar":
@@ -217,7 +213,6 @@ for chart_num in range(num_charts):
             elif chart_type == "Donut":
                 fig = px.pie(agg_df, names=x_col, values=y_target, hole=0.5, color_discrete_sequence=color_seq)
 
-        # Clean up layout
         fig.update_layout(
             title={'text': title, 'font': {'size': 18}},
             showlegend=show_legend,
@@ -225,9 +220,8 @@ for chart_num in range(num_charts):
             yaxis_title=(y_col if chart_type != "Histogram" else "Count"),
             height=400,
             margin=dict(l=20, r=20, t=50, b=20),
-            plot_bgcolor='rgba(0,0,0,0)', # Clean white background
+            plot_bgcolor='rgba(0,0,0,0)', 
         )
-        # Add gridlines
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f2f6')
         
         charts_data.append((chart_num, fig))
@@ -243,42 +237,34 @@ st.markdown("### 📈 Dashboard Analytics")
 if num_charts == 1:
     if charts_data[0][1]:
         st.plotly_chart(charts_data[0][1], use_container_width=True)
-    else:
-        st.warning("Could not render chart. Please adjust your axis or aggregation settings.")
 elif num_charts == 2:
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(charts_data[0][1], use_container_width=True) if charts_data[0][1] else st.warning("Chart 1 Error")
+        st.plotly_chart(charts_data[0][1], use_container_width=True) if charts_data[0][1] else None
     with col2:
-        st.plotly_chart(charts_data[1][1], use_container_width=True) if charts_data[1][1] else st.warning("Chart 2 Error")
+        st.plotly_chart(charts_data[1][1], use_container_width=True) if charts_data[1][1] else None
 elif num_charts >= 3:
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(charts_data[0][1], use_container_width=True) if charts_data[0][1] else st.warning("Chart 1 Error")
+        st.plotly_chart(charts_data[0][1], use_container_width=True) if charts_data[0][1] else None
         if num_charts == 4:
-            st.plotly_chart(charts_data[2][1], use_container_width=True) if charts_data[2][1] else st.warning("Chart 3 Error")
+            st.plotly_chart(charts_data[2][1], use_container_width=True) if charts_data[2][1] else None
     with col2:
-        st.plotly_chart(charts_data[1][1], use_container_width=True) if charts_data[1][1] else st.warning("Chart 2 Error")
+        st.plotly_chart(charts_data[1][1], use_container_width=True) if charts_data[1][1] else None
         if num_charts == 3:
-            st.plotly_chart(charts_data[2][1], use_container_width=True) if charts_data[2][1] else st.warning("Chart 3 Error")
+            st.plotly_chart(charts_data[2][1], use_container_width=True) if charts_data[2][1] else None
         if num_charts == 4:
-            st.plotly_chart(charts_data[3][1], use_container_width=True) if charts_data[3][1] else st.warning("Chart 4 Error")
+            st.plotly_chart(charts_data[3][1], use_container_width=True) if charts_data[3][1] else None
 
 # =====================================================
 # EXPORT
 # =====================================================
 st.divider()
-st.download_button(
-    "📥 Download Filtered Data (CSV)",
-    filtered_df.to_csv(index=False),
-    "filtered_data.csv",
-    type="secondary"
-)
+st.download_button("📥 Download Filtered Data (CSV)", filtered_df.to_csv(index=False), "filtered_data.csv", type="secondary")
 
 # =====================================================
 # FLOATING AI CHAT WIDGET
 # =====================================================
-# The text here is what appears on the pill button
 with st.popover("💬 Ask AI"):
     st.markdown("#### 🤖 Data Assistant")
     
@@ -287,7 +273,7 @@ with st.popover("💬 Ask AI"):
         st.session_state.chat_history = []
         st.rerun()
 
-    chat_container = st.container(height=400)
+    chat_container = st.container(height=350)
     
     for msg in st.session_state.chat_history:
         chat_container.chat_message(msg["role"]).write(msg["content"])
