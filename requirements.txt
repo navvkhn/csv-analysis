@@ -7,3 +7,4 @@ pyarrow>=15.0.0
 openpyxl>=3.1.2
 pyppeteer
 streamlit-elements
+openai>=1.14.0
