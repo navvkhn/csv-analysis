@@ -4,7 +4,60 @@ import pandas as pd
 import plotly.express as px
 from openai import OpenAI
 
+# =====================================================
+# PAGE CONFIGURATION (Must be first)
+# =====================================================
 st.set_page_config(page_title="CSV / Excel Data Explorer", layout="wide", page_icon="📊")
+
+# =====================================================
+# CSS FOR FLOATING CHAT WIDGET
+# =====================================================
+st.markdown("""
+<style>
+    /* Pin the popover button to the bottom right */
+    div[data-testid="stPopover"] {
+        position: fixed;
+        bottom: 30px;
+        right: 30px;
+        z-index: 9999;
+    }
+    
+    /* Make the popover button look like a chat bubble */
+    div[data-testid="stPopover"] > button {
+        border-radius: 50px;
+        height: 60px;
+        width: 60px;
+        background-color: #667eea;
+        color: white;
+        border: none;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        font-size: 24px;
+        transition: transform 0.2s;
+    }
+    
+    div[data-testid="stPopover"] > button:hover {
+        transform: scale(1.05);
+        background-color: #764ba2;
+    }
+    
+    /* Set the width of the open chat window */
+    div[data-testid="stPopoverBody"] {
+        width: 380px !important;
+        height: 550px !important;
+        padding: 15px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# =====================================================
+# STATE INITIALIZATION
+# =====================================================
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "visual_filters" not in st.session_state:
+    st.session_state.visual_filters = {}
+if "custom_sort" not in st.session_state:
+    st.session_state.custom_sort = {}
 
 # =====================================================
 # OPTIMIZATION: CACHE DATA LOADING
@@ -15,40 +68,6 @@ def load_data(file):
         return pd.read_excel(file)
     return pd.read_csv(file)
 
-# =====================================================
-# AI ANALYSIS FUNCTION
-# =====================================================
-def get_ai_analysis(dataframe):
-    try:
-        # Fails gracefully if secrets aren't set up yet
-        api_key = st.secrets.get("OLLAMA_API_KEY", "ollama")
-        
-        client = OpenAI(
-            base_url="https://test.mynewgen.xyz/v1", 
-            api_key=api_key
-        )
-
-        data_summary = f"""
-        Dataset Summary:
-        - Total Rows: {dataframe.shape[0]}
-        - Total Columns: {dataframe.shape[1]}
-        - Columns: {', '.join(dataframe.columns.tolist())}
-        - Basic Stats: \n{dataframe.describe().to_string()}
-        """
-        
-        prompt = f"You are an expert Data Analyst. Based on this dataset summary, provide a brief 3-sentence analysis of the data structure, and suggest exactly 2 specific chart types the user should build using the available columns.\n\n{data_summary}"
-        
-        return client.chat.completions.create(
-            model="qwen3.5:2b", # Ensure this matches your local Ollama instance
-            messages=[{"role": "user", "content": prompt}],
-            stream=True
-        )
-    except Exception as e:
-        return None
-
-# =====================================================
-# RESET
-# =====================================================
 def reset_app():
     for k in list(st.session_state.keys()):
         del st.session_state[k]
@@ -102,24 +121,6 @@ with st.expander("📋 Data Preview & Column Selection", expanded=True):
 cols = df.columns.tolist()
 
 # =====================================================
-# AI ASSISTANT UI
-# =====================================================
-st.subheader("🤖 Ask Local AI")
-if st.button("Generate AI Insights", type="primary"):
-    with st.spinner("Connecting to secure home AI server..."):
-        response_stream = get_ai_analysis(df)
-        if response_stream:
-            response_container = st.empty()
-            full_response = ""
-            for chunk in response_stream:
-                if chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
-                    response_container.info(full_response + "▌")
-            response_container.info(full_response)
-        else:
-            st.error("Could not connect to the AI server. Check your Cloudflare tunnel and API key.")
-
-# =====================================================
 # GLOBAL FILTERS
 # =====================================================
 st.sidebar.header("🔍 Global Filters")
@@ -140,11 +141,6 @@ st.sidebar.caption(f"Rows after global filters: {len(filtered_df)}")
 # =====================================================
 st.sidebar.divider()
 num_charts = st.sidebar.slider("Number of Charts", 1, 4, 1)
-
-if "visual_filters" not in st.session_state:
-    st.session_state.visual_filters = {}
-if "custom_sort" not in st.session_state:
-    st.session_state.custom_sort = {}
 
 charts_data = []
 AGGS = ["Count", "Sum", "Average", "Min", "Max"]
@@ -221,7 +217,7 @@ for chart_num in range(num_charts):
         charts_data.append((chart_num, fig))
         
     except Exception as e:
-        charts_data.append((chart_num, None)) # Pass None if calculation fails
+        charts_data.append((chart_num, None))
 
 # =====================================================
 # DASHBOARD RENDERING (SMART GRID)
@@ -263,3 +259,70 @@ st.download_button(
     "filtered_data.csv",
     type="primary"
 )
+
+# =====================================================
+# FLOATING AI CHAT WIDGET
+# =====================================================
+with st.popover("💬"):
+    st.markdown("### 🤖 Data Assistant")
+    
+    # Add a clear chat button
+    cols_header = st.columns([3, 1])
+    if cols_header[1].button("Clear", help="Clear conversation history"):
+        st.session_state.chat_history = []
+        st.rerun()
+
+    # Scrollable container for chat messages
+    chat_container = st.container(height=350)
+    
+    # Render existing history
+    for msg in st.session_state.chat_history:
+        chat_container.chat_message(msg["role"]).write(msg["content"])
+    
+    # Chat Input Form
+    with st.form("chat_form", clear_on_submit=True, border=False):
+        cols = st.columns([4, 1])
+        user_input = cols[0].text_input("Message", label_visibility="collapsed", placeholder="Ask about this data...")
+        submitted = cols[1].form_submit_button("➤")
+        
+        if submitted and user_input:
+            # Add user message to UI and memory
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            chat_container.chat_message("user").write(user_input)
+            
+            # Retrieve API Key securely
+            api_key = st.secrets.get("OLLAMA_API_KEY", "ollama")
+            
+            try:
+                client = OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key=api_key)
+                
+                # Dynamic system prompt based on current data
+                system_msg = f"""You are a helpful Data Analyst. 
+                The user is currently viewing a dataset with {df.shape[0]} rows and {df.shape[1]} columns.
+                Available columns: {', '.join(df.columns.tolist())}
+                Keep answers short, punchy, and highly relevant to the uploaded data."""
+                
+                messages = [{"role": "system", "content": system_msg}] + st.session_state.chat_history
+                
+                # Stream the AI response
+                with chat_container.chat_message("assistant"):
+                    response_placeholder = st.empty()
+                    full_response = ""
+                    
+                    stream = client.chat.completions.create(
+                        model="qwen3.5:2b", # Make sure this matches your local model
+                        messages=messages,
+                        stream=True
+                    )
+                    
+                    for chunk in stream:
+                        if chunk.choices[0].delta.content:
+                            full_response += chunk.choices[0].delta.content
+                            response_placeholder.markdown(full_response + "▌")
+                    
+                    # Finalize output and save to memory
+                    response_placeholder.markdown(full_response)
+                    st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                    
+            except Exception as e:
+                chat_container.error("Could not reach the AI Server. Check the Cloudflare tunnel.")
