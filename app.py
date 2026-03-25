@@ -39,7 +39,7 @@ def get_ai_analysis(dataframe):
         prompt = f"You are an expert Data Analyst. Based on this dataset summary, provide a brief 3-sentence analysis of the data structure, and suggest exactly 2 specific chart types the user should build using the available columns.\n\n{data_summary}"
         
         return client.chat.completions.create(
-            model="qwen3.5:1.8b", # Ensure this matches your local Ollama instance
+            model="qwen3.5:2b", # Ensure this matches your local Ollama instance
             messages=[{"role": "user", "content": prompt}],
             stream=True
         )
