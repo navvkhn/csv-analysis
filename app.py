@@ -10,20 +10,17 @@ from openai import OpenAI
 st.set_page_config(page_title="Data Explorer & AI", layout="wide", page_icon="📊")
 
 # =====================================================
-# AGGRESSIVE UI/UX CSS STYLING (FIXED)
+# AGGRESSIVE UI/UX CSS STYLING
 # =====================================================
 st.markdown("""
 <style>
-    /* 1. Force the popover container to bottom right, and RESTRICT WIDTH */
     div[data-testid="stPopover"] {
         position: fixed !important;
         bottom: 30px !important;
         right: 30px !important;
-        width: max-content !important; /* CRITICAL FIX: Stops the button from stretching */
+        width: max-content !important; 
         z-index: 999999 !important;
     }
-    
-    /* 2. Style the button as a sleek pill */
     div[data-testid="stPopover"] > button {
         border-radius: 30px !important;
         padding: 12px 28px !important;
@@ -35,15 +32,12 @@ st.markdown("""
         font-weight: 600 !important;
         letter-spacing: 0.5px !important;
         transition: all 0.2s ease !important;
-        width: auto !important; /* Ensures button stays compact */
+        width: auto !important; 
     }
-    
     div[data-testid="stPopover"] > button:hover {
         transform: translateY(-2px) !important;
         box-shadow: 0 12px 28px rgba(102, 126, 234, 0.5) !important;
     }
-    
-    /* 3. Style the open chat window (Popover Body) */
     div[data-testid="stPopoverBody"] {
         width: 380px !important;
         height: 600px !important;
@@ -51,10 +45,8 @@ st.markdown("""
         border-radius: 16px !important;
         box-shadow: 0 10px 40px rgba(0,0,0,0.15) !important;
         border: 1px solid #f0f2f6 !important;
-        margin-bottom: 10px !important; /* Pushes window slightly above the button */
+        margin-bottom: 10px !important; 
     }
-    
-    /* 4. Pad the bottom of the main app so content isn't hidden by the widget */
     div[data-testid="stMainBlockContainer"] {
         padding-bottom: 120px !important;
     }
@@ -79,7 +71,6 @@ def load_data(file):
     return pd.read_csv(file)
 
 def get_smart_categorical_column(df, cols):
-    """UX Feature: Prevents the 'barcode' chart by finding a good category"""
     for col in cols:
         if df[col].nunique() > 1 and df[col].nunique() < 40:
             return cols.index(col)
@@ -180,8 +171,11 @@ for chart_num in range(num_charts):
     chart_df = filtered_df.copy()
     
     try:
+        # Create an aggregated dataframe specifically so the AI can read it later
         if chart_type == "Histogram":
             fig = px.histogram(chart_df, x=x_col, title=title, color_discrete_sequence=['#667eea'])
+            agg_df = chart_df[x_col].value_counts().reset_index()
+            agg_df.columns = [x_col, "Count"]
         else:
             if aggregation == "Count":
                 agg_df = chart_df.groupby(x_col).size().reset_index(name="value")
@@ -218,16 +212,60 @@ for chart_num in range(num_charts):
             showlegend=show_legend,
             xaxis_title=x_col,
             yaxis_title=(y_col if chart_type != "Histogram" else "Count"),
-            height=400,
-            margin=dict(l=20, r=20, t=50, b=20),
-            plot_bgcolor='rgba(0,0,0,0)', 
+            height=400, margin=dict(l=20, r=20, t=50, b=20), plot_bgcolor='rgba(0,0,0,0)', 
         )
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f2f6')
         
-        charts_data.append((chart_num, fig))
+        # We now save the agg_df and title along with the figure so the AI can read it
+        charts_data.append((chart_num, fig, agg_df, title))
         
     except Exception as e:
-        charts_data.append((chart_num, None))
+        charts_data.append((chart_num, None, None, None))
+
+# =====================================================
+# REUSABLE CHART RENDERING FUNCTION WITH AI BUTTON
+# =====================================================
+def render_chart_card(chart_tuple):
+    idx, fig, agg_df, title = chart_tuple
+    if fig is None:
+        st.warning("Could not render chart. Please adjust your settings.")
+        return
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Contextual AI Analysis Button under the chart
+    if st.button(f"🤖 Analyze Chart Data", key=f"btn_analyze_{idx}"):
+        with st.spinner("Analyzing chart data..."):
+            api_key = st.secrets.get("OLLAMA_API_KEY", "ollama")
+            try:
+                client = OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key=api_key)
+                
+                # Format the aggregated data into a readable string for the AI
+                data_string = agg_df.to_string(index=False)
+                user_prompt = f"Please analyze this specific chart. Title: '{title}'. Here is the aggregated data plotted on the chart:\n{data_string}\n\nProvide 2-3 sentences of actionable insight based *only* on this data."
+                
+                # Sync to global chat history so the floating widget remembers it!
+                st.session_state.chat_history.append({"role": "user", "content": f"Analyze the chart: '{title}'"})
+                
+                response_placeholder = st.empty()
+                full_response = ""
+                
+                stream = client.chat.completions.create(
+                    model="qwen2.5:3b", 
+                    messages=[{"role": "system", "content": "You are a sharp data analyst."}] + st.session_state.chat_history + [{"role": "user", "content": user_prompt}],
+                    stream=True
+                )
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        response_placeholder.info(full_response + "▌")
+                
+                response_placeholder.info(full_response)
+                # Save the AI's response to the chat history
+                st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+            except Exception as e:
+                st.error("Connection to AI server failed.")
 
 # =====================================================
 # DASHBOARD RENDERING
@@ -235,26 +273,20 @@ for chart_num in range(num_charts):
 st.markdown("### 📈 Dashboard Analytics")
 
 if num_charts == 1:
-    if charts_data[0][1]:
-        st.plotly_chart(charts_data[0][1], use_container_width=True)
+    render_chart_card(charts_data[0])
 elif num_charts == 2:
     col1, col2 = st.columns(2)
-    with col1:
-        st.plotly_chart(charts_data[0][1], use_container_width=True) if charts_data[0][1] else None
-    with col2:
-        st.plotly_chart(charts_data[1][1], use_container_width=True) if charts_data[1][1] else None
+    with col1: render_chart_card(charts_data[0])
+    with col2: render_chart_card(charts_data[1])
 elif num_charts >= 3:
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(charts_data[0][1], use_container_width=True) if charts_data[0][1] else None
-        if num_charts == 4:
-            st.plotly_chart(charts_data[2][1], use_container_width=True) if charts_data[2][1] else None
+        render_chart_card(charts_data[0])
+        if num_charts == 4: render_chart_card(charts_data[2])
     with col2:
-        st.plotly_chart(charts_data[1][1], use_container_width=True) if charts_data[1][1] else None
-        if num_charts == 3:
-            st.plotly_chart(charts_data[2][1], use_container_width=True) if charts_data[2][1] else None
-        if num_charts == 4:
-            st.plotly_chart(charts_data[3][1], use_container_width=True) if charts_data[3][1] else None
+        render_chart_card(charts_data[1])
+        if num_charts == 3: render_chart_card(charts_data[2])
+        if num_charts == 4: render_chart_card(charts_data[3])
 
 # =====================================================
 # EXPORT
@@ -291,7 +323,6 @@ with st.popover("💬 Ask AI"):
             
             try:
                 client = OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key=api_key)
-                
                 system_msg = f"""You are an expert Data Analyst and BI Consultant. 
                 The user is viewing a dataset with {df.shape[0]} rows.
                 Columns available: {', '.join(df.columns.tolist())}
@@ -304,11 +335,10 @@ with st.popover("💬 Ask AI"):
                     full_response = ""
                     
                     stream = client.chat.completions.create(
-                        model="qwen2.5:3b", 
+                        model="qwen3.5:1.8b", 
                         messages=messages,
                         stream=True
                     )
-                    
                     for chunk in stream:
                         if chunk.choices[0].delta.content:
                             full_response += chunk.choices[0].delta.content
