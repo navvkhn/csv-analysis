@@ -242,7 +242,7 @@ def render_chart_card(chart_tuple):
                 
                 # Format the aggregated data into a readable string for the AI
                 data_string = agg_df.to_string(index=False)
-                user_prompt = f"Please analyze this specific chart. Title: '{title}'. Here is the aggregated data plotted on the chart:\n{data_string}\n\nProvide 2-3 sentences of actionable insight based *only* on this data."
+                user_prompt = f"Please analyze this specific chart. Title: '{title}'. Here is the aggregated data plotted on the chart:\n{data_string}\n\nProvide few sentences and summary and actionable insight based *only* on this data."
                 
                 # Sync to global chat history so the floating widget remembers it!
                 st.session_state.chat_history.append({"role": "user", "content": f"Analyze the chart: '{title}'"})
