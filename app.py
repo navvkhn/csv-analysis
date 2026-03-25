@@ -3,17 +3,17 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from openai import OpenAI
-import io
 
 # =====================================================
-# 1. PAGE CONFIG & MODERN UI/UX STYLING
+# PAGE CONFIGURATION
 # =====================================================
-st.set_page_config(page_title="Data Explorer Pro", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Data Explorer & AI", layout="wide", page_icon="📊")
 
-# Custom CSS for the Floating Action Button (FAB) and Layout
+# =====================================================
+# AGGRESSIVE UI/UX CSS STYLING
+# =====================================================
 st.markdown("""
 <style>
-    /* Force the popover to the bottom right and RESTRICT WIDTH */
     div[data-testid="stPopover"] {
         position: fixed !important;
         bottom: 30px !important;
@@ -21,8 +21,6 @@ st.markdown("""
         width: max-content !important; 
         z-index: 999999 !important;
     }
-    
-    /* Style the button as a modern, high-contrast pill */
     div[data-testid="stPopover"] > button {
         border-radius: 30px !important;
         padding: 12px 28px !important;
@@ -32,39 +30,51 @@ st.markdown("""
         box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4) !important;
         font-size: 16px !important;
         font-weight: 600 !important;
+        letter-spacing: 0.5px !important;
         transition: all 0.2s ease !important;
+        width: auto !important; 
     }
-    
+    div[data-testid="stPopover"] > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 12px 28px rgba(102, 126, 234, 0.5) !important;
+    }
     div[data-testid="stPopoverBody"] {
-        width: 400px !important;
-        height: 550px !important;
+        width: 380px !important;
+        height: 600px !important;
+        padding: 20px !important;
         border-radius: 16px !important;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.2) !important;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.15) !important;
+        border: 1px solid #f0f2f6 !important;
+        margin-bottom: 10px !important; 
     }
-
-    /* Prevent content from being hidden behind the floating button */
-    .block-container {
+    div[data-testid="stMainBlockContainer"] {
         padding-bottom: 120px !important;
-    }
-    
-    /* Clean up headers */
-    .stApp header {
-        background-color: transparent !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# 2. STATE & DATA UTILITIES
+# STATE INITIALIZATION
 # =====================================================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "custom_sort" not in st.session_state:
+    st.session_state.custom_sort = {}
 
-@st.cache_data(show_spinner="Reading file...")
+# =====================================================
+# OPTIMIZATION: CACHE DATA & SMART DEFAULTS
+# =====================================================
+@st.cache_data(show_spinner="Loading data...")
 def load_data(file):
     if file.name.endswith((".xlsx", ".xls")):
         return pd.read_excel(file)
     return pd.read_csv(file)
+
+def get_smart_categorical_column(df, cols):
+    for col in cols:
+        if df[col].nunique() > 1 and df[col].nunique() < 40:
+            return cols.index(col)
+    return 0 
 
 def reset_app():
     for k in list(st.session_state.keys()):
@@ -72,178 +82,270 @@ def reset_app():
     st.rerun()
 
 # =====================================================
-# 3. MAIN HEADER
+# HEADER & UPLOAD
 # =====================================================
 st.markdown("""
 <div style="background:linear-gradient(90deg,#667eea,#764ba2);
-padding:24px;border-radius:15px;color:white;margin-bottom:30px;box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-<h2 style="margin:0; font-weight: 700;">📊 Data Explorer & Local AI Analyst</h2>
-<p style="margin:5px 0 0 0; opacity: 0.85; font-size: 1.1rem;">Upload, visualize, and chat with your raw data locally.</p>
+padding:20px;border-radius:12px;color:white;margin-bottom:24px;box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+<h2 style="margin:0; font-weight: 600;">📊 CSV / Excel Data Explorer</h2>
+<p style="margin:5px 0 0 0; opacity: 0.9;">BI-grade analysis tool with Secure Local AI</p>
 </div>
 """, unsafe_allow_html=True)
 
-# =====================================================
-# 4. FILE UPLOAD & PREVIEW
-# =====================================================
-with st.sidebar:
-    st.markdown("### 🛠️ Controls")
-    if st.button("🔄 Reset Environment", use_container_width=True):
-        reset_app()
-    
-    st.divider()
-    uploaded_file = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls"])
+if st.button("🔄 Reset Environment", use_container_width=False):
+    reset_app()
 
-if not uploaded_file:
-    st.info("👋 Welcome! Please upload a dataset in the sidebar to start your analysis.")
+uploaded = st.session_state.get("file_upload")
+
+if uploaded is None:
+    with st.container(border=True):
+        st.subheader("📁 Upload Dataset")
+        file = st.file_uploader("Drop your CSV/Excel files here.", type=["csv", "xlsx", "xls"])
+        if file:
+            st.session_state.file_upload = file
+            st.rerun()
+
+uploaded = st.session_state.get("file_upload")
+if not uploaded:
     st.stop()
 
-# Load and store data
+# =====================================================
+# LOAD & PREVIEW DATA
+# =====================================================
 if "raw_df" not in st.session_state:
-    st.session_state.raw_df = load_data(uploaded_file)
+    st.session_state.raw_df = load_data(uploaded)
 
-df = st.session_state.raw_df.copy()
+raw_df = st.session_state.raw_df.copy()
+
+with st.expander("📋 Data Preview & Column Selection", expanded=False):
+    selected_cols = st.multiselect(
+        "Select columns to include in analysis",
+        raw_df.columns.tolist(),
+        default=raw_df.columns.tolist()
+    )
+    df = raw_df[selected_cols].copy()
+    st.dataframe(df.head(50), use_container_width=True)
+
 cols = df.columns.tolist()
-
-with st.expander("🔍 View Raw Data Sample", expanded=False):
-    st.dataframe(df.head(100), use_container_width=True)
+default_x_index = get_smart_categorical_column(df, cols)
 
 # =====================================================
-# 5. RAW DATA ANALYSIS (THE CORE FEATURE)
+# GLOBAL FILTERS
 # =====================================================
-st.markdown("### 📑 Full File Deep-Dive")
-with st.container(border=True):
-    col_btn, col_res = st.columns([1, 2])
-    
-    with col_btn:
-        st.write("**Analyze Actual Rows**")
-        st.caption("AI will read the raw text of your data to find patterns, anomalies, and insights.")
-        run_analysis = st.button("🚀 Generate 6-Point Summary", type="primary", use_container_width=True)
-    
-    with col_res:
-        if run_analysis:
-            # 1. Prepare raw data string (CSV format is best for LLM understanding)
-            # We limit to first 300 rows to ensure local Qwen 1.8b doesn't crash
-            raw_data_string = df.head(300).to_csv(index=False)
-            
-            prompt = f"""
-            You are a Senior Data Analyst. Read the following RAW DATA carefully.
-            Provide a deep summary of the content in exactly 6 numbered bullet points.
-            Highlight specific trends, unusual values, and data quality observations.
+st.sidebar.markdown("### 🔍 Global Filters")
+filtered_df = df.copy()
 
-            RAW DATA CONTENT:
-            {raw_data_string}
-            """
+for c in cols:
+    if filtered_df[c].nunique() < 50:
+        options = sorted(filtered_df[c].dropna().astype(str).unique())
+        selected = st.sidebar.multiselect(c, options, key=f"gf_{c}")
+        if selected:
+            filtered_df = filtered_df[filtered_df[c].astype(str).isin(selected)]
+
+st.sidebar.caption(f"**Rows displaying:** {len(filtered_df):,}")
+
+# =====================================================
+# MULTI-CHART CONTROL
+# =====================================================
+st.sidebar.divider()
+num_charts = st.sidebar.slider("Number of Charts", 1, 4, 1)
+
+charts_data = []
+AGGS = ["Count", "Sum", "Average", "Min", "Max"]
+
+for chart_num in range(num_charts):
+    with st.sidebar.expander(f"📊 Chart {chart_num + 1} Config", expanded=(chart_num==0)):
+        chart_type = st.selectbox("Chart Type", ["Bar", "Line", "Scatter", "Area", "Pie", "Donut", "Histogram"], key=f"type_{chart_num}")
+        x_col = st.selectbox("X-axis (Category)", cols, index=default_x_index, key=f"x_{chart_num}")
+        y_col = st.selectbox("Y-axis (Value)", cols, key=f"y_{chart_num}")
+        aggregation = st.selectbox("Aggregation", AGGS, key=f"agg_{chart_num}")
+        title = st.text_input("Chart Title", f"{aggregation} by {x_col}", key=f"title_{chart_num}")
+
+        with st.expander("Appearance & Sorting"):
+            show_labels = st.checkbox("Show Data Labels", False, key=f"lbl_{chart_num}")
+            show_legend = st.checkbox("Show Legend", True, key=f"leg_{chart_num}")
+            sort_mode = st.selectbox("Sort By", ["Value (Desc)", "Value (Asc)", "None"], key=f"sort_{chart_num}")
+            st.session_state.custom_sort[chart_num] = {"mode": sort_mode}
+
+    # --- DATA PREP FOR CHART ---
+    chart_df = filtered_df.copy()
+    
+    try:
+        # Create an aggregated dataframe specifically so the AI can read it later
+        if chart_type == "Histogram":
+            fig = px.histogram(chart_df, x=x_col, title=title, color_discrete_sequence=['#667eea'])
+            agg_df = chart_df[x_col].value_counts().reset_index()
+            agg_df.columns = [x_col, "Count"]
+        else:
+            if aggregation == "Count":
+                agg_df = chart_df.groupby(x_col).size().reset_index(name="value")
+                y_target = "value"
+            else:
+                chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce")
+                agg_map = {"Sum": "sum", "Average": "mean", "Min": "min", "Max": "max"}
+                agg_df = chart_df.groupby(x_col)[y_col].agg(agg_map[aggregation]).reset_index(name="value")
+                y_target = "value"
+
+            sort_cfg = st.session_state.custom_sort.get(chart_num, {})
+            if sort_cfg.get("mode") == "Value (Asc)":
+                agg_df = agg_df.sort_values(y_target, ascending=True)
+            elif sort_cfg.get("mode") == "Value (Desc)":
+                agg_df = agg_df.sort_values(y_target, ascending=False)
+
+            color_seq = px.colors.qualitative.Pastel
             
-            report_area = st.empty()
-            full_report = ""
-            
+            if chart_type == "Bar":
+                fig = px.bar(agg_df, x=x_col, y=y_target, color=x_col, color_discrete_sequence=color_seq)
+            elif chart_type == "Line":
+                fig = px.line(agg_df, x=x_col, y=y_target, markers=True, color_discrete_sequence=['#667eea'])
+            elif chart_type == "Scatter":
+                fig = px.scatter(agg_df, x=x_col, y=y_target, color=x_col, size=y_target, color_discrete_sequence=color_seq)
+            elif chart_type == "Area":
+                fig = px.area(agg_df, x=x_col, y=y_target, color_discrete_sequence=['#764ba2'])
+            elif chart_type == "Pie":
+                fig = px.pie(agg_df, names=x_col, values=y_target, color_discrete_sequence=color_seq)
+            elif chart_type == "Donut":
+                fig = px.pie(agg_df, names=x_col, values=y_target, hole=0.5, color_discrete_sequence=color_seq)
+
+        fig.update_layout(
+            title={'text': title, 'font': {'size': 18}},
+            showlegend=show_legend,
+            xaxis_title=x_col,
+            yaxis_title=(y_col if chart_type != "Histogram" else "Count"),
+            height=400, margin=dict(l=20, r=20, t=50, b=20), plot_bgcolor='rgba(0,0,0,0)', 
+        )
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#f0f2f6')
+        
+        # We now save the agg_df and title along with the figure so the AI can read it
+        charts_data.append((chart_num, fig, agg_df, title))
+        
+    except Exception as e:
+        charts_data.append((chart_num, None, None, None))
+
+# =====================================================
+# REUSABLE CHART RENDERING FUNCTION WITH AI BUTTON
+# =====================================================
+def render_chart_card(chart_tuple):
+    idx, fig, agg_df, title = chart_tuple
+    if fig is None:
+        st.warning("Could not render chart. Please adjust your settings.")
+        return
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Contextual AI Analysis Button under the chart
+    if st.button(f"🤖 Analyze Chart Data", key=f"btn_analyze_{idx}"):
+        with st.spinner("Analyzing chart data..."):
+            api_key = st.secrets.get("OLLAMA_API_KEY", "ollama")
             try:
-                api_key = st.secrets.get("OLLAMA_API_KEY", "ollama")
                 client = OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key=api_key)
                 
+                # Format the aggregated data into a readable string for the AI
+                data_string = agg_df.to_string(index=False)
+                user_prompt = f"Please analyze this specific chart. Title: '{title}'. Here is the aggregated data plotted on the chart:\n{data_string}\n\nProvide few sentences and summary and actionable insight based *only* on this data."
+                
+                # Sync to global chat history so the floating widget remembers it!
+                st.session_state.chat_history.append({"role": "user", "content": f"Analyze the chart: '{title}'"})
+                
+                response_placeholder = st.empty()
+                full_response = ""
+                
                 stream = client.chat.completions.create(
-                    model="qwen2.5:3b",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2, # Lower temperature for factual analysis
+                    model="qwen2.5:3b", 
+                    messages=[{"role": "system", "content": "You are a sharp data analyst."}] + st.session_state.chat_history + [{"role": "user", "content": user_prompt}],
                     stream=True
                 )
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
-                        full_report += chunk.choices[0].delta.content
-                        report_area.info(full_report + "▌")
-                report_area.info(full_report)
+                        full_response += chunk.choices[0].delta.content
+                        response_placeholder.info(full_response + "▌")
                 
-                # Sync report to chat memory for follow-up questions
-                st.session_state.chat_history.append({"role": "assistant", "content": f"**Full File Summary:**\n{full_report}"})
-            except:
-                st.error("Connection failed. Check your Cloudflare tunnel and local Ollama server.")
+                response_placeholder.info(full_response)
+                # Save the AI's response to the chat history
+                st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+            except Exception as e:
+                st.error("Connection to AI server failed.")
 
 # =====================================================
-# 6. DYNAMIC DASHBOARD BUILDER
+# DASHBOARD RENDERING
 # =====================================================
-st.sidebar.divider()
-st.sidebar.markdown("### 📈 Visuals")
-num_charts = st.sidebar.slider("Number of Charts", 1, 4, 1)
+st.markdown("### 📈 Dashboard Analytics")
 
-charts_list = []
-for i in range(num_charts):
-    with st.sidebar.expander(f"Chart {i+1} Configuration"):
-        type = st.selectbox("Chart Type", ["Bar", "Line", "Scatter", "Pie"], key=f"t{i}")
-        x = st.selectbox("X-Axis", cols, key=f"x{i}")
-        y = st.selectbox("Y-Axis", cols, key=f"y{i}")
-        agg = st.selectbox("Aggregation", ["Count", "Sum", "Average"], key=f"a{i}")
-        
-        try:
-            if agg == "Count":
-                p_df = df.groupby(x).size().reset_index(name="val")
-            else:
-                p_df = df.groupby(x)[y].agg(agg.lower().replace("average", "mean")).reset_index(name="val")
-            
-            if type == "Bar": fig = px.bar(p_df, x=x, y="val", color=x, template="plotly_white")
-            elif type == "Line": fig = px.line(p_df, x=x, y="val", markers=True)
-            elif type == "Scatter": fig = px.scatter(df, x=x, y=y, color_discrete_sequence=['#667eea'])
-            else: fig = px.pie(p_df, names=x, values="val", hole=0.4)
-            
-            fig.update_layout(height=350, margin=dict(l=10, r=10, t=30, b=10))
-            charts_list.append((fig, p_df, f"{agg} of {y} by {x}"))
-        except:
-            charts_list.append((None, None, None))
-
-# Render Dashboard Grid
-st.markdown("### 📊 Dashboard Metrics")
-cols_grid = st.columns(2) if num_charts > 1 else [st.container()]
-for i, (fig, p_df, title) in enumerate(charts_list):
-    with (cols_grid[i % 2] if num_charts > 1 else cols_grid[0]):
-        if fig:
-            st.markdown(f"**{title}**")
-            st.plotly_chart(fig, use_container_width=True)
-            # Individual chart analysis button
-            if st.button(f"Analyze Visual {i+1}", key=f"ab{i}", use_container_width=True):
-                st.chat_message("assistant").write_stream(OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key="ollama").chat.completions.create(
-                    model="qwen2.5:3b",
-                    messages=[{"role": "user", "content": f"Analyze this chart data briefly: {p_df.to_string()}"}],
-                    stream=True
-                ))
+if num_charts == 1:
+    render_chart_card(charts_data[0])
+elif num_charts == 2:
+    col1, col2 = st.columns(2)
+    with col1: render_chart_card(charts_data[0])
+    with col2: render_chart_card(charts_data[1])
+elif num_charts >= 3:
+    col1, col2 = st.columns(2)
+    with col1:
+        render_chart_card(charts_data[0])
+        if num_charts == 4: render_chart_card(charts_data[2])
+    with col2:
+        render_chart_card(charts_data[1])
+        if num_charts == 3: render_chart_card(charts_data[2])
+        if num_charts == 4: render_chart_card(charts_data[3])
 
 # =====================================================
-# 7. FLOATING AI CHAT PILL (UX OPTIMIZED)
+# EXPORT
 # =====================================================
-with st.popover("💬 Ask AI Assistant"):
-    st.markdown("#### 🤖 AI Data Companion")
+st.divider()
+st.download_button("📥 Download Filtered Data (CSV)", filtered_df.to_csv(index=False), "filtered_data.csv", type="secondary")
+
+# =====================================================
+# FLOATING AI CHAT WIDGET
+# =====================================================
+with st.popover("💬 Ask AI"):
+    st.markdown("#### 🤖 Data Assistant")
     
-    if st.button("🗑️ Clear History", use_container_width=True):
+    cols_header = st.columns([3, 1])
+    if cols_header[1].button("Clear", help="Clear history", use_container_width=True):
         st.session_state.chat_history = []
         st.rerun()
 
-    chat_area = st.container(height=350)
-    for m in st.session_state.chat_history:
-        chat_area.chat_message(m["role"]).write(m["content"])
+    chat_container = st.container(height=350)
     
-    if user_q := st.chat_input("Ask a follow-up question..."):
-        st.session_state.chat_history.append({"role": "user", "content": user_q})
-        chat_area.chat_message("user").write(user_q)
+    for msg in st.session_state.chat_history:
+        chat_container.chat_message(msg["role"]).write(msg["content"])
+    
+    with st.form("chat_form", clear_on_submit=True, border=False):
+        cols = st.columns([4, 1])
+        user_input = cols[0].text_input("Message", label_visibility="collapsed", placeholder="What trends do you see?")
+        submitted = cols[1].form_submit_button("➤", use_container_width=True)
         
-        with chat_area.chat_message("assistant"):
-            full_res = ""
-            place = st.empty()
-            # Context includes the first 5 rows of data automatically
-            context = f"Data Head:\n{df.head(5).to_csv(index=False)}\n\nUser Question: {user_q}"
+        if submitted and user_input:
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            chat_container.chat_message("user").write(user_input)
+            
+            api_key = st.secrets.get("OLLAMA_API_KEY", "ollama")
             
             try:
-                cli = OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key="ollama")
-                stream = cli.chat.completions.create(
-                    model="qwen2.5:3b",
-                    messages=[{"role": "system", "content": "You are a professional analyst."}] + st.session_state.chat_history,
-                    stream=True
-                )
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        full_res += chunk.choices[0].delta.content
-                        place.markdown(full_res)
-                st.session_state.chat_history.append({"role": "assistant", "content": full_res})
-            except:
-                st.error("AI Server Offline")
-
-# Export
-st.sidebar.divider()
-st.sidebar.download_button("📥 Export Current Data", df.to_csv(index=False), "data_export.csv", use_container_width=True)
+                client = OpenAI(base_url="https://test.mynewgen.xyz/v1", api_key=api_key)
+                system_msg = f"""You are an expert Data Analyst and BI Consultant. 
+                The user is viewing a dataset with {df.shape[0]} rows.
+                Columns available: {', '.join(df.columns.tolist())}
+                Provide precise, actionable insights. Format your response cleanly."""
+                
+                messages = [{"role": "system", "content": system_msg}] + st.session_state.chat_history
+                
+                with chat_container.chat_message("assistant"):
+                    response_placeholder = st.empty()
+                    full_response = ""
+                    
+                    stream = client.chat.completions.create(
+                        model="qwen2.5:3b", 
+                        messages=messages,
+                        stream=True
+                    )
+                    for chunk in stream:
+                        if chunk.choices[0].delta.content:
+                            full_response += chunk.choices[0].delta.content
+                            response_placeholder.markdown(full_response + "▌")
+                    
+                    response_placeholder.markdown(full_response)
+                    st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                    
+            except Exception as e:
+                chat_container.error("Connection failed. Ensure the Cloudflare tunnel to your home server is active.")
